@@ -26,10 +26,12 @@ with OpenAI-compatible or Anthropic-compatible protocols. The proxy:
 
 ## Filter semantics (agreed with owner)
 
-- Primary filter: **per-1M-token price caps** — e.g. `max_input_per_1m = 0.02`,
-  `max_output_per_1m = 0.1`. A model passes only if BOTH caps are satisfied.
+- Primary filter: **per-1M-token price caps** — e.g. `max_input_per_1m = 2.0`,
+  `max_output_per_1m = 10.0`. A model passes only if BOTH caps are satisfied.
 - The upstream `/v1/models` returns per-token pricing (`pricing.prompt`,
   `pricing.completion`); multiply by 1e6 to compare against the caps.
+- **Zero-priced models pass by default.** A price of 0 means a free or
+  not-yet-offered model and is always below the caps (owner decision).
 - Secondary filter: minimum discount percent, delegated to upstream via the
   `/min{N}/v1/...` path prefix rather than computed locally when possible.
 - Optional: model allow/deny lists.
