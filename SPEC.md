@@ -169,8 +169,9 @@ JS build toolchain.
    (13/13 local checks green against the live catalog)
 4. ✅ **Filter engine**: all 7 filter types + toggles, `failed_filters` errors,
    `/min{N}` rewrite, 48 unit tests green
-5. **Admin panel**: config API ✅ (endpoints live), UI pending — filter cards,
-   key masking, catalog table, refresh + staleness badge, agent snippets
+5. ✅ **Admin panel**: config API, filter cards with toggles, masked key entry,
+   catalog table (search/sort/pass-fail reasons), refresh + staleness badge,
+   restart warning, agent snippets — 27/27 admin checks green, UI driven live
 6. **Anthropic skin**: `/anthropic/*` passthrough + filtered model list
 7. **End-to-end verification**: OpenAI SDK and Claude Code through the proxy;
    rejection test for a capped-out model; streaming test; refresh test

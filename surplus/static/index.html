@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Surplus Router — Admin</title>
+<link rel="stylesheet" href="/admin/assets/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">SR</span>
+    <div>
+      <h1>Surplus Router</h1>
+      <p class="sub" id="status-line">loading…</p>
+    </div>
+  </div>
+  <div class="topbar-right">
+    <div class="badges" id="badges"></div>
+    <button class="btn" id="refresh-btn" type="button">Refresh prices</button>
+  </div>
+</header>
+
+<div class="banner hidden" id="banner"></div>
+
+<main class="grid">
+  <section class="card">
+    <h2>Connection</h2>
+    <p class="hint">Host and port need a router restart. Upstream and refresh interval apply on save.</p>
+    <div class="field">
+      <label for="f-host">Bind host</label>
+      <input id="f-host" type="text" spellcheck="false">
+    </div>
+    <div class="field">
+      <label for="f-port">Proxy port</label>
+      <input id="f-port" type="number" min="1" max="65535" step="1">
+    </div>
+    <div class="field">
+      <label for="f-base">Upstream base URL</label>
+      <input id="f-base" type="text" spellcheck="false">
+    </div>
+    <div class="field">
+      <label for="f-ttl">Price refresh interval (seconds)</label>
+      <input id="f-ttl" type="number" min="5" step="5">
+      <span class="note">How often the router re-reads <code>/v1/models</code> and <code>/v1/prices</code>.</span>
+    </div>
+    <div class="field">
+      <label for="f-timeout">Request timeout (seconds)</label>
+      <input id="f-timeout" type="number" min="5" step="5">
+    </div>
+    <div class="row">
+      <button class="btn primary" id="save-connection" type="button">Save connection</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>API key</h2>
+    <p class="hint">The router replaces the caller's Authorization header with this key. Agents can send any placeholder.</p>
+    <div class="kv">
+      <span>Source</span><strong id="key-source">—</strong>
+      <span>Current key</span><code id="key-masked">—</code>
+      <span>Env variable</span><code id="key-env">—</code>
+    </div>
+    <div class="field">
+      <label for="f-key">Surplus API key</label>
+      <input id="f-key" type="password" autocomplete="off" spellcheck="false" placeholder="si_…">
+      <span class="note">Environment value wins over the file value. Saved to <code>config.ini</code>, which is gitignored.</span>
+    </div>
+    <div class="row">
+      <button class="btn primary" id="save-key" type="button">Save key</button>
+      <button class="btn danger" id="clear-key" type="button">Remove stored key</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Catalog</h2>
+    <p class="hint">Prices come from the live marketplace and are re-read on the interval above.</p>
+    <div class="kv" id="catalog-kv"></div>
+    <div class="counts" id="counts"></div>
+    <div class="row">
+      <button class="btn" id="refresh-btn-2" type="button">Refresh now</button>
+    </div>
+  </section>
+
+  <section class="card wide">
+    <h2>Filters</h2>
+    <p class="hint">
+      Each filter applies only while enabled. A model is forwarded only if it passes every enabled filter.
+      <strong id="filter-preview">—</strong>
+    </p>
+    <div id="filter-cards" class="filter-grid"></div>
+    <div class="field inline">
+      <label class="switch">
+        <input type="checkbox" id="f-allow-unknown">
+        <span class="slider"></span>
+      </label>
+      <span>Allow models that are not in the catalog (fail-open instead of fail-closed)</span>
+    </div>
+    <div class="row">
+      <button class="btn primary" id="save-filters" type="button">Save filters</button>
+      <button class="btn" id="preview-btn" type="button">Preview counts</button>
+    </div>
+  </section>
+
+  <section class="card wide">
+    <h2>Model catalog</h2>
+    <div class="toolbar">
+      <input id="model-search" type="search" placeholder="Search model id or name…" spellcheck="false">
+      <label class="check"><input type="checkbox" id="model-passed-only"> passing only</label>
+      <select id="model-sort">
+        <option value="output">sort: output price</option>
+        <option value="input">sort: input price</option>
+        <option value="discount">sort: discount</option>
+        <option value="context">sort: context</option>
+        <option value="name">sort: name</option>
+      </select>
+      <span class="note" id="model-count"></span>
+    </div>
+    <div class="table-wrap">
+      <table id="model-table">
+        <thead>
+          <tr>
+            <th>Model</th><th>Provider</th><th class="num">Input $/1M</th>
+            <th class="num">Output $/1M</th><th class="num">Discount</th>
+            <th class="num">Context</th><th>Status</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card wide">
+    <h2>Connect your agent</h2>
+    <p class="hint">Point any OpenAI-compatible or Anthropic-compatible client at the router. The API key placeholder can be anything.</p>
+    <div id="snippets"></div>
+  </section>
+</main>
+
+<div class="toast hidden" id="toast"></div>
+<script src="/admin/assets/app.js"></script>
+</body>
+</html>

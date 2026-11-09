@@ -7,7 +7,7 @@ prices fresh on its own.
 
 - OpenAI-compatible: `http://127.0.0.1:8404/v1`
 - Anthropic-compatible: `http://127.0.0.1:8404/anthropic` (stage 6)
-- Admin panel: `http://127.0.0.1:8404/admin` (stage 5)
+- Admin panel: `http://127.0.0.1:8404/admin` — API key, filters, port, live catalog
 - Bound to `127.0.0.1` only
 
 ## Run
@@ -76,7 +76,8 @@ A failed refresh keeps serving the last-good copy and flags `stale` in
 
 ```bash
 uv run python scripts/verify_local.py   # boots the router on port 8499, 13 checks
-uv run pytest -q                         # unit tests
+uv run python scripts/verify_admin.py   # admin panel + config API, 27 checks
+uv run pytest -q                         # 48 unit tests
 uv run ruff check surplus scripts tests
 ```
 
@@ -88,7 +89,9 @@ surplus/catalog.py   TTL cache of upstream models + reference prices
 surplus/filters.py   pure filter evaluation (unit-testable)
 surplus/proxy.py     streaming passthrough, header handling
 surplus/main.py      FastAPI app: admin API, gate, /v1 routes, refresh loop
+surplus/static/      admin panel (index.html, app.js, style.css) - no build step
 scripts/verify_local.py  end-to-end local verification against the live catalog
+scripts/verify_admin.py  admin panel + config API verification over HTTP
 ```
 
 See `SPEC.md` for the full design and `AGENTS.md` for project rules.

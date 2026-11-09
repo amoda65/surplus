@@ -15,7 +15,8 @@ from typing import Any
 
 import uvicorn
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from . import __version__
 from .catalog import Catalog
@@ -151,6 +152,18 @@ def gate_model(model_id: str | None) -> JSONResponse | None:
     )
 
 
+def listening_on(request: Request, cfg: AppConfig) -> tuple[str, int]:
+    """The socket this process is actually bound to, not what config.ini says.
+
+    They differ when the owner changed the port in the panel but has not
+    restarted yet - which is exactly when the UI must warn about it.
+    """
+    server = request.scope.get("server")
+    if isinstance(server, tuple) and len(server) == 2 and server[1]:
+        return str(server[0]), int(server[1])
+    return cfg.server.host, cfg.server.port
+
+
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
     """Load the catalog at startup, then refresh it on a TTL loop forever."""
@@ -194,6 +207,19 @@ app = FastAPI(
     redoc_url=None,
 )
 
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+app.mount("/admin/assets", StaticFiles(directory=STATIC_DIR), name="admin-assets")
+
+
+# ------------------------------------------------------------------ admin UI
+
+
+@app.get("/admin")
+@app.get("/admin/")
+async def admin_ui() -> FileResponse:
+    """Serve the control panel. Localhost-only bind keeps it off the network."""
+    return FileResponse(STATIC_DIR / "index.html")
+
 
 # ---------------------------------------------------------------- admin API
 
@@ -215,18 +241,21 @@ async def root() -> JSONResponse:
 
 
 @app.get("/admin/api/status")
-async def admin_status() -> JSONResponse:
+async def admin_status(request: Request) -> JSONResponse:
     cfg = state.cfg
     filters = cfg.filters
     total = len(state.catalog.models)
     passing = [m for m in state.catalog.models.values() if not evaluate(m, filters)]
     key, source = resolve_api_key(cfg)
+    host, port = listening_on(request, cfg)
     return JSONResponse(
         {
             "version": __version__,
             "uptime_seconds": round(time.time() - state.started_at, 1),
             "config": public_view(cfg),
             "api_key": {"source": source, "masked": mask_key(key)},
+            "listening_on": {"host": host, "port": port},
+            "restart_required": (host, port) != (cfg.server.host, cfg.server.port),
             "catalog": state.catalog.snapshot(cfg.upstream.catalog_ttl_seconds),
             "counts": {
                 "total": total,
@@ -240,7 +269,12 @@ async def admin_status() -> JSONResponse:
 
 
 @app.get("/admin/api/models")
-async def admin_models(q: str = "", passed_only: bool = False, limit: int = 1000) -> JSONResponse:
+async def admin_models(
+    q: str = "",
+    passed_only: bool = False,
+    limit: int = 1000,
+    sort: str = "output",
+) -> JSONResponse:
     """Annotated catalog for the admin table: price per 1M + pass/fail reasons."""
     filters = state.cfg.filters
     needle = q.strip().lower()
@@ -252,8 +286,24 @@ async def admin_models(q: str = "", passed_only: bool = False, limit: int = 1000
         if passed_only and failed:
             continue
         rows.append(model.to_admin_row(failed))
-    rows.sort(key=lambda r: (r["output_per_1m"], r["input_per_1m"], r["id"]))
-    return JSONResponse({"count": len(rows), "models": rows[: max(1, limit)]})
+
+    sort_keys = {
+        "output": lambda r: (r["output_per_1m"], r["input_per_1m"], r["id"]),
+        "input": lambda r: (r["input_per_1m"], r["output_per_1m"], r["id"]),
+        "name": lambda r: r["id"].lower(),
+        "discount": lambda r: (
+            -(r["estimated_discount_pct"] if r["estimated_discount_pct"] is not None else -1e9)
+        ),
+        "context": lambda r: -r["context_length"],
+    }
+    rows.sort(key=sort_keys.get(sort, sort_keys["output"]))
+    return JSONResponse(
+        {
+            "count": len(rows),
+            "returned": min(len(rows), max(1, limit)),
+            "models": rows[: max(1, limit)],
+        }
+    )
 
 
 @app.post("/admin/api/refresh")
@@ -274,10 +324,13 @@ async def admin_get_config() -> JSONResponse:
 
 
 @app.post("/admin/api/config")
-async def admin_set_config(payload: dict[str, Any]) -> JSONResponse:
+async def admin_set_config(request: Request, payload: dict[str, Any]) -> JSONResponse:
     """Save config from the UI. The API key is only written when supplied."""
     reload_config()
     cfg = state.cfg
+    # What the process is actually listening on right now: a host/port change
+    # cannot take effect without a restart, so the UI must say so.
+    running_host, running_port = listening_on(request, cfg)
 
     server = payload.get("server") or {}
     if "host" in server and isinstance(server["host"], str) and server["host"].strip():
@@ -358,10 +411,10 @@ async def admin_set_config(payload: dict[str, Any]) -> JSONResponse:
             "ok": True,
             "config": public_view(state.cfg),
             "counts": {"total": total, "passing": passing, "filtered_out": total - passing},
-            "restart_required": bool(
-                server.get("port") not in (None, state.cfg.server.port)
-                or server.get("host") not in (None, state.cfg.server.host)
+            "restart_required": (
+                cfg.server.host != running_host or cfg.server.port != running_port
             ),
+            "listening_on": {"host": running_host, "port": running_port},
         }
     )
 
