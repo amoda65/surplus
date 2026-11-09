@@ -63,9 +63,9 @@ def test_parse_args_rejects_non_numeric_port() -> None:
         parse_args(["--port", "not-a-port"])
 
 
-def test_default_config_path_points_at_project_root() -> None:
+def test_default_config_path_is_resolved_not_hardcoded() -> None:
     assert CONFIG_PATH.name == "config.ini"
-    assert (CONFIG_PATH.parent / "surplus").is_dir()
+    assert CONFIG_PATH.is_absolute()
 
 
 @pytest.mark.parametrize(

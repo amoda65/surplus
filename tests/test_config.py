@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -178,3 +179,102 @@ def test_defaults_cover_every_filter_key() -> None:
     view_filter = set(public_view(AppConfig())["filter"])
     dataclass_fields = set(FilterConfig().__dict__)
     assert defaults == view_filter == dataclass_fields
+
+
+# ------------------------------------------------------- config path resolution
+
+
+def test_explicit_path_wins_over_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(cfgmod.CONFIG_ENV_VAR, str(tmp_path / "env.ini"))
+    resolved = cfgmod.resolve_config_path(tmp_path / "explicit.ini")
+    assert resolved == (tmp_path / "explicit.ini").resolve()
+
+
+def test_env_var_used_when_no_explicit_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(cfgmod.CONFIG_ENV_VAR, str(tmp_path / "env.ini"))
+    assert cfgmod.resolve_config_path() == (tmp_path / "env.ini").resolve()
+
+
+def test_local_config_ini_preferred_over_user_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Running inside a project dir uses that project's config."""
+    monkeypatch.delenv(cfgmod.CONFIG_ENV_VAR, raising=False)
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "config.ini").write_text("[server]\nport = 8111\n", encoding="utf-8")
+
+    resolved = cfgmod.resolve_config_path()
+    assert resolved == (tmp_path / "config.ini").resolve()
+    assert load_config(resolved).server.port == 8111
+
+
+def test_falls_back_to_user_config_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No local config.ini -> the per-user dir, so `surplus` works from anywhere."""
+    monkeypatch.delenv(cfgmod.CONFIG_ENV_VAR, raising=False)
+    empty_dir = tmp_path / "somewhere-else"
+    empty_dir.mkdir()
+    monkeypatch.chdir(empty_dir)
+    if os.name == "nt":
+        monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+        expected = tmp_path / "appdata" / "surplus-router" / "config.ini"
+    else:
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+        expected = tmp_path / "xdg" / "surplus-router" / "config.ini"
+    assert cfgmod.resolve_config_path() == expected
+
+
+def test_user_config_dir_honours_platform_base(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    if os.name == "nt":
+        monkeypatch.setenv("APPDATA", str(tmp_path))
+        assert cfgmod.user_config_dir() == tmp_path / "surplus-router"
+    else:
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        assert cfgmod.user_config_dir() == tmp_path / "surplus-router"
+
+
+def test_public_view_reports_config_path(tmp_path: Path) -> None:
+    cfg = load_config(tmp_path / "config.ini")
+    assert public_view(cfg)["config_path"] == str(cfg.config_path)
+
+
+# ------------------------------------------------------------------ ensure_config
+
+
+def test_ensure_config_creates_defaults_on_first_run(tmp_path: Path) -> None:
+    from surplus.main import ensure_config
+
+    path = tmp_path / "nested" / "config.ini"
+    cfg = ensure_config(path)
+    assert path.exists(), "first run must create the config file"
+    assert cfg.server.port == 8404
+    assert cfg.server.open_browser is True
+    assert (tmp_path / "nested" / "config.example.ini").exists()
+    # reloading gives the same values
+    assert load_config(path).server.port == 8404
+
+
+def test_ensure_config_never_overwrites_existing(tmp_path: Path) -> None:
+    from surplus.main import ensure_config
+
+    path = tmp_path / "config.ini"
+    path.write_text("[server]\nport = 8123\n[filter]\nmax_input_per_1m = 0.25\n", encoding="utf-8")
+    cfg = ensure_config(path)
+    assert cfg.server.port == 8123
+    assert cfg.filters.max_input_per_1m == pytest.approx(0.25)
+    assert path.read_text(encoding="utf-8").count("8123") == 1
+
+
+def test_ensure_config_leaves_an_edited_example_alone(tmp_path: Path) -> None:
+    from surplus.main import ensure_config
+
+    example = tmp_path / "config.example.ini"
+    example.write_text("# my own notes\n", encoding="utf-8")
+    ensure_config(tmp_path / "config.ini")
+    assert example.read_text(encoding="utf-8") == "# my own notes\n"

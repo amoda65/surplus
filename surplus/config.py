@@ -14,6 +14,38 @@ from pathlib import Path
 
 CONFIG_FILENAME = "config.ini"
 EXAMPLE_FILENAME = "config.example.ini"
+APP_DIR_NAME = "surplus-router"
+CONFIG_ENV_VAR = "SURPLUS_CONFIG"
+
+
+def user_config_dir() -> Path:
+    """Per-user config dir: %APPDATA%\\surplus-router on Windows, XDG elsewhere."""
+    if os.name == "nt":
+        base = os.environ.get("APPDATA") or str(Path.home() / "AppData" / "Roaming")
+    else:
+        base = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
+    return Path(base) / APP_DIR_NAME
+
+
+def resolve_config_path(explicit: str | Path | None = None) -> Path:
+    """Where config.ini lives. Precedence:
+
+    1. ``--config`` argument
+    2. ``SURPLUS_CONFIG`` environment variable
+    3. ``./config.ini`` in the current directory, when it exists (project-local
+       override, so running inside the repo uses the repo's config)
+    4. the per-user config dir — this is what makes ``surplus`` work from any
+       directory after a global install
+    """
+    if explicit:
+        return Path(explicit).expanduser().resolve()
+    from_env = os.environ.get(CONFIG_ENV_VAR, "").strip()
+    if from_env:
+        return Path(from_env).expanduser().resolve()
+    local = Path.cwd() / CONFIG_FILENAME
+    if local.exists():
+        return local.resolve()
+    return user_config_dir() / CONFIG_FILENAME
 
 # Canonical defaults; also the source of truth for config.example.ini content.
 DEFAULTS: dict[str, dict[str, str]] = {

@@ -161,6 +161,7 @@ function renderStatus(status) {
   $("#key-source").textContent = keySrc || "—";
   $("#key-masked").textContent = status.api_key?.masked || "not set";
   $("#key-env").textContent = status.config?.auth?.api_key_env || "SURPLUS_API_KEY";
+  $("#config-path").textContent = status.config?.config_path || "—";
 
   const rows = [
     ["Last refresh", cat.last_fetch_iso || "never"],

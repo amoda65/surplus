@@ -10,7 +10,71 @@ prices fresh on its own.
 - Admin panel: `http://127.0.0.1:8404/admin` — API key, filters, port, live catalog
 - Bound to `127.0.0.1` only
 
-## Run
+## Install as a global command (recommended)
+
+One command gives you `surplus` in any terminal, from any directory:
+
+```powershell
+cd D:\dev\surplus
+uv tool install --editable .
+uv tool update-shell        # adds %USERPROFILE%\.local\bin to PATH (once)
+```
+
+Then open a **new** terminal and just run:
+
+```powershell
+surplus                     # starts the router and opens the admin panel
+surplus --port 8405         # one-off port override
+surplus --no-browser        # start without opening the browser
+surplus --config D:\other\config.ini
+```
+
+`--editable` means code changes in `D:\dev\surplus` take effect on the next run
+with no reinstall. To pick up dependency changes, or to install a frozen copy
+instead of a live one:
+
+```powershell
+uv tool install . --reinstall         # non-editable snapshot
+uv tool upgrade surplus-router        # after pulling new code
+uv tool uninstall surplus-router      # remove
+```
+
+Installed as a tool, the router reads/writes its config in the per-user dir:
+`%APPDATA%\surplus-router\config.ini` (created with defaults on first run).
+
+### Which config.ini is used
+
+| precedence | source | when it applies |
+|---|---|---|
+| 1 | `--config PATH` | explicit, always wins |
+| 2 | `SURPLUS_CONFIG` env var | set in the shell |
+| 3 | `./config.ini` | a `config.ini` exists in the current directory (project-local override) |
+| 4 | `%APPDATA%\surplus-router\config.ini` | everywhere else (the normal global case) |
+
+The panel shows the file in use under **Connection → Config file**, and the
+startup log prints it too — so you always know which one you are editing.
+
+### Other install options (kept for reference)
+
+- **pipx** (if you prefer it over uv): `pipx install --editable D:\dev\surplus`
+- **PowerShell profile alias** — no install, always runs from source:
+  ```powershell
+  # notepad $PROFILE
+  function surplus { uv run --project D:\dev\surplus python -m surplus.main @args }
+  ```
+- **`.bat` shim in a PATH dir** (e.g. `%LOCALAPPDATA%\Microsoft\WindowsApps`):
+  ```bat
+  @echo off
+  uv run --project D:\dev\surplus python -m surplus.main %*
+  ```
+- **Auto-start at logon** — Task Scheduler, trigger "At log on", action:
+  program `surplus`, arguments `--no-browser` (add `--port 8404`).
+  Or NSSM/`sc.exe` if you want it as a real Windows service.
+- **Single .exe for machines without Python** — PyInstaller:
+  `uv run pyinstaller --onefile --add-data "surplus/static;surplus/static" -n surplus -m surplus.main`
+  (heavier, and static assets must be bundled; only worth it for distribution).
+
+## Run from source (no install)
 
 ```bash
 uv sync --extra dev          # once: install fastapi, uvicorn, httpx

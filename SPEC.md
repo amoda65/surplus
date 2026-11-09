@@ -102,6 +102,17 @@ Admin API (JSON, localhost only): `GET/POST /admin/api/config`,
 
 ## Config — `config.ini` (gitignored), `config.example.ini` (committed)
 
+Location is resolved at startup, in this order:
+
+1. `--config PATH`
+2. `SURPLUS_CONFIG` environment variable
+3. `./config.ini` in the current working directory, if it exists (project-local override)
+4. `%APPDATA%\surplus-router\config.ini` (Windows) / `~/.config/surplus-router/config.ini`
+
+The file is created from defaults on first run, and the resolved path is printed
+in the startup log and shown in the admin panel under Connection, so it is always
+clear which file is in effect.
+
 ```ini
 [server]
 host = 127.0.0.1
@@ -172,7 +183,11 @@ JS build toolchain.
    `/min{N}` rewrite, 48 unit tests green
 5. ✅ **Admin panel**: config API, filter cards with toggles, masked key entry,
    catalog table (search/sort/pass-fail reasons), refresh + staleness badge,
-   restart warning, agent snippets — 27/27 admin checks green, UI driven live
+   restart warning, agent snippets — 28/28 admin checks green, UI driven live
+5b. ✅ **Global install + startup ergonomics**: `surplus` console script via
+   `uv tool install --editable .`, busy-port fail-fast, `--host/--port/--config/
+   --no-browser`, browser auto-open once the socket accepts connections, and
+   config resolution that works from any directory (`%APPDATA%\surplus-router`)
 6. **Anthropic skin**: `/anthropic/*` passthrough + filtered model list
 7. **End-to-end verification**: OpenAI SDK and Claude Code through the proxy;
    rejection test for a capped-out model; streaming test; refresh test

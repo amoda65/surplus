@@ -31,6 +31,7 @@ from .config import (
     mask_key,
     public_view,
     resolve_api_key,
+    resolve_config_path,
     save_config,
     write_example_config,
 )
@@ -40,7 +41,9 @@ from .proxy import build_client, forward
 log = logging.getLogger("surplus")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
-CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.ini"
+# Where config.ini lives: ./config.ini when present, else the per-user dir
+# (%APPDATA%\surplus-router on Windows). See config.resolve_config_path.
+CONFIG_PATH = resolve_config_path()
 
 # Paths proxied without a model gate (no model in body, or handled explicitly).
 PASS_THROUGH_PATHS = {
@@ -172,9 +175,7 @@ def listening_on(request: Request, cfg: AppConfig) -> tuple[str, int]:
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
     """Load the catalog at startup, then refresh it on a TTL loop forever."""
-    if not CONFIG_PATH.exists():
-        write_example_config(CONFIG_PATH.parent / "config.example.ini")
-        log.info("config.ini not found; using built-in defaults")
+    log.info("config file: %s", CONFIG_PATH)
 
     ok = await state.catalog.refresh(state.client)
     if ok:
@@ -493,6 +494,24 @@ async def proxy_v1(sub_path: str, request: Request):
         )
 
 
+def ensure_config(path: Path) -> AppConfig:
+    """Load config.ini, creating it from defaults on first run.
+
+    Writes config.example.ini next to it only when missing, so an edited example
+    is never clobbered.
+    """
+    example = path.parent / "config.example.ini"
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        cfg = AppConfig(config_path=path)
+        save_config(cfg, path)
+        if not example.exists():
+            write_example_config(example)
+        log.info("first run: created %s with default settings", path)
+        return cfg
+    return load_config(path)
+
+
 def port_in_use(host: str, port: int) -> bool:
     """Probe the bind address before doing any work, so a busy port fails fast."""
     family = socket.AF_INET6 if ":" in host else socket.AF_INET
@@ -586,12 +605,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     global CONFIG_PATH
-    if args.config:
-        CONFIG_PATH = Path(args.config).resolve()
+    CONFIG_PATH = resolve_config_path(args.config)
 
-    cfg = load_config(CONFIG_PATH)
-    # The module-level state was built at import time from the default path; if
-    # --config pointed elsewhere, hand the new config to the running app state.
+    cfg = ensure_config(CONFIG_PATH)
+    # The module-level state was built at import time; point it at the resolved
+    # config so --config and the installed-tool layout both work.
     state.cfg = cfg
     state.catalog.base_url = cfg.upstream.base_url
     host = args.host or cfg.server.host
@@ -608,9 +626,9 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
-    write_example_config(CONFIG_PATH.parent / "config.example.ini")
     url = admin_url(host, port)
     log.info("starting surplus-router on http://%s:%d (admin: %s)", host, port, url)
+    log.info("using config file: %s", CONFIG_PATH)
 
     if cfg.server.open_browser and not args.no_browser:
         # Waits for the socket to accept connections, then opens the panel.
