@@ -65,9 +65,9 @@ DEFAULTS: dict[str, dict[str, str]] = {
     },
     "filter": {
         "enable_price_input": "true",
-        "max_input_per_1m": "2.0",
+        "max_input_per_1m": "0.1",
         "enable_price_output": "true",
-        "max_output_per_1m": "10.0",
+        "max_output_per_1m": "0.5",
         "enable_discount": "false",
         "min_discount_pct": "30",
         "enable_models_allow": "false",
@@ -100,9 +100,9 @@ class UpstreamConfig:
 @dataclass
 class FilterConfig:
     enable_price_input: bool = True
-    max_input_per_1m: float = 2.0
+    max_input_per_1m: float = 0.1
     enable_price_output: bool = True
-    max_output_per_1m: float = 10.0
+    max_output_per_1m: float = 0.5
     enable_discount: bool = False
     min_discount_pct: int = 30
     enable_models_allow: bool = False
@@ -216,9 +216,9 @@ def load_config(path: Path | str | None = None) -> AppConfig:
     )
     filters = FilterConfig(
         enable_price_input=_to_bool(filter_raw.get("enable_price_input"), True),
-        max_input_per_1m=_to_float(filter_raw.get("max_input_per_1m"), 2.0),
+        max_input_per_1m=_to_float(filter_raw.get("max_input_per_1m"), 0.1),
         enable_price_output=_to_bool(filter_raw.get("enable_price_output"), True),
-        max_output_per_1m=_to_float(filter_raw.get("max_output_per_1m"), 10.0),
+        max_output_per_1m=_to_float(filter_raw.get("max_output_per_1m"), 0.5),
         enable_discount=_to_bool(filter_raw.get("enable_discount"), False),
         min_discount_pct=_to_int(filter_raw.get("min_discount_pct"), 30),
         enable_models_allow=_to_bool(filter_raw.get("enable_models_allow"), False),

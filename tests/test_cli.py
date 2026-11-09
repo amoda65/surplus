@@ -174,3 +174,47 @@ def test_open_browser_setting_round_trips(tmp_path) -> None:
 
 def test_open_browser_defaults_to_true(tmp_path) -> None:
     assert load_config(tmp_path / "missing.ini").server.open_browser is True
+
+
+# ------------------------------------------------------- config auto-reload
+
+
+def test_maybe_reload_config_picks_up_disk_edits(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Editing config.ini by hand must apply without restarting the router."""
+    import os
+    import time as time_mod
+
+    import surplus.main as m
+
+    path = tmp_path / "config.ini"
+    save_config(AppConfig(), path)
+    monkeypatch.setattr(m, "CONFIG_PATH", path)
+    monkeypatch.setattr(m.state, "cfg", load_config(path))
+    monkeypatch.setattr(m, "_config_mtime", m._stat_mtime(path))
+
+    assert m.maybe_reload_config().filters.max_input_per_1m == pytest.approx(0.1)
+
+    edited = load_config(path)
+    edited.filters.max_input_per_1m = 0.25
+    save_config(edited, path)
+    # force a distinct mtime: filesystem timestamp resolution is coarse
+    future = time_mod.time() + 10
+    os.utime(path, (future, future))
+
+    assert m.maybe_reload_config().filters.max_input_per_1m == pytest.approx(0.25)
+
+    # an untouched file must not be re-parsed (same object identity)
+    same = m.state.cfg
+    assert m.maybe_reload_config() is same
+
+
+def test_maybe_reload_config_survives_a_missing_file(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import surplus.main as m
+
+    monkeypatch.setattr(m, "CONFIG_PATH", tmp_path / "does-not-exist.ini")
+    before = m.state.cfg
+    assert m.maybe_reload_config() is before

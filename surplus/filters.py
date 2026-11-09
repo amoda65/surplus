@@ -1,7 +1,18 @@
 """Filter evaluation: pure functions, no I/O, no globals.
 
-Every filter type is independently switchable. ``evaluate`` returns the ids of
-the filters that rejected a model so callers can surface ``failed_filters``.
+Price semantics (owner-approved, verified against the live API):
+
+- ``/v1/models`` pricing is the **list/reference** price in per-token decimal
+  strings (docs: "multiply by 1M for $/1M tokens rate"). It is NOT what a buyer
+  pays, so it is informational here.
+- ``/api/marketplace`` carries the **actual best live offer** per model in
+  microdollars per 1M tokens (``best_input_per_1m`` / ``best_output_per_1m``).
+  Price caps are applied to these numbers - what the owner actually pays.
+- Models with no live offer, or priced per media unit instead of per token
+  (image / video / audio jobs), are rejected fail-closed.
+
+``evaluate`` returns the ids of every rule that rejected a model so callers can
+surface ``failed_filters``.
 """
 
 from __future__ import annotations
@@ -10,8 +21,14 @@ from dataclasses import dataclass, field
 
 from .config import FilterConfig
 
-# Filter ids, in evaluation order. Keep in sync with the admin UI cards.
+# Rule ids. Keep in sync with the admin UI.
+NO_MARKET_OFFER = "no_market_offer"
+NOT_TOKEN_PRICED = "not_token_priced"
+UNKNOWN_MODEL = "unknown_model"
+
 FILTER_IDS = (
+    NO_MARKET_OFFER,
+    NOT_TOKEN_PRICED,
     "models_deny",
     "models_allow",
     "providers_allow",
@@ -21,88 +38,179 @@ FILTER_IDS = (
     "context_min",
 )
 
-UNKNOWN_MODEL = "unknown_model"
+# Rules with no enable toggle: the owner chose fail-closed for anything that
+# cannot be routed at a known per-token price.
+ALWAYS_ON_RULES = (NO_MARKET_OFFER, NOT_TOKEN_PRICED)
 
-# Prices arrive as per-token decimal strings and are multiplied by 1e6, which
-# can land a hair off the intended value (0.00000057 * 1e6 == 0.5700000000000001,
-# 0.0000021 * 1e6 == 2.0999999999999996). Caps are inclusive maxima, so compare
-# with this tolerance to keep a price that is exactly at the cap passing.
+# Price classes reported to the admin UI.
+CLASS_TOKEN = "token"
+CLASS_MEDIA = "media_unit"
+CLASS_UNPRICED = "unpriced"
+CLASS_NO_OFFER = "no_offer"
+
+# Caps are inclusive maxima, and converted prices can land a hair off the decimal
+# value they came from, so compare with this tolerance.
 CAP_EPSILON = 1e-9
+
+MICROUSD_PER_USD = 1_000_000
 
 
 def _per_token_to_per_1m(value: object) -> float:
-    """Upstream pricing is a per-token decimal string; convert to per-1M tokens."""
+    """``/v1/models`` list price: per-token decimal string -> USD per 1M tokens."""
     try:
-        return float(value or 0) * 1_000_000
+        return float(value or 0) * MICROUSD_PER_USD
     except (TypeError, ValueError):
         return 0.0
 
 
+def _microd_per_1m_to_usd(value: object) -> float | None:
+    """``/api/marketplace`` price: microdollars per 1M tokens -> USD per 1M tokens."""
+    if value is None:
+        return None
+    try:
+        return float(value) / MICROUSD_PER_USD
+    except (TypeError, ValueError):
+        return None
+
+
 @dataclass(frozen=True)
 class ModelInfo:
-    """One catalog entry, normalized to per-1M-token pricing."""
+    """One catalog entry joined with its live marketplace offer."""
 
     id: str
     name: str
     provider: str
     context_length: int
-    input_per_1m: float
-    output_per_1m: float
+    # list/reference prices, USD per 1M tokens (from /v1/models)
+    list_input_per_1m: float = 0.0
+    list_output_per_1m: float = 0.0
+    # actual best live offer, USD per 1M tokens (from /api/marketplace)
+    market_input_per_1m: float | None = None
+    market_output_per_1m: float | None = None
+    # media pricing (image / job / minute / 1K characters ...)
+    media_unit: str | None = None
+    media_unit_price_usd: float | None = None
+    # marketplace metadata
+    has_market_offer: bool = False
+    best_live_discount_pct: float | None = None
+    best_discount_pct: float | None = None
+    healthy_seller_count: int = 0
+    num_sellers: int = 0
+    direct_input_per_1m: float | None = None
+    direct_output_per_1m: float | None = None
+    # reference list prices from /v1/prices (highest provider price = conservative)
     reference_input_per_1m: float | None = None
     reference_output_per_1m: float | None = None
     raw: dict = field(default_factory=dict)
 
     @classmethod
-    def from_catalog_entry(cls, entry: dict, reference: dict | None = None) -> ModelInfo:
+    def from_catalog_entry(
+        cls,
+        entry: dict,
+        reference: dict | None = None,
+        market: dict | None = None,
+    ) -> ModelInfo:
         pricing = entry.get("pricing") or {}
         ref = reference or {}
+        mk = market or {}
         return cls(
             id=str(entry.get("id") or ""),
             name=str(entry.get("name") or entry.get("id") or ""),
             provider=str(entry.get("provider") or ""),
             context_length=int(entry.get("context_length") or 0),
-            input_per_1m=_per_token_to_per_1m(pricing.get("prompt")),
-            output_per_1m=_per_token_to_per_1m(pricing.get("completion")),
+            list_input_per_1m=_per_token_to_per_1m(pricing.get("prompt")),
+            list_output_per_1m=_per_token_to_per_1m(pricing.get("completion")),
+            market_input_per_1m=_microd_per_1m_to_usd(mk.get("input_micro_per_1m")),
+            market_output_per_1m=_microd_per_1m_to_usd(mk.get("output_micro_per_1m")),
+            media_unit=mk.get("media_unit"),
+            media_unit_price_usd=_microd_per_1m_to_usd(mk.get("media_unit_price_micro")),
+            has_market_offer=bool(mk),
+            best_live_discount_pct=mk.get("best_live_discount_pct"),
+            best_discount_pct=mk.get("best_discount_pct"),
+            healthy_seller_count=int(mk.get("healthy_seller_count") or 0),
+            num_sellers=int(mk.get("num_sellers") or 0),
+            direct_input_per_1m=_microd_per_1m_to_usd(mk.get("direct_input_micro_per_1m")),
+            direct_output_per_1m=_microd_per_1m_to_usd(mk.get("direct_output_micro_per_1m")),
             reference_input_per_1m=ref.get("input"),
             reference_output_per_1m=ref.get("output"),
             raw=entry,
         )
 
     @property
-    def estimated_discount_pct(self) -> float | None:
-        """Estimated buyer discount below the reference list price, or None if unknown.
+    def is_token_priced(self) -> bool:
+        """True when the live offer quotes a per-token price we can cap."""
+        if not self.has_market_offer:
+            return False
+        return bool((self.market_input_per_1m or 0) > 0 or (self.market_output_per_1m or 0) > 0)
 
-        Mirrors upstream ``estimated_discount_pct = (1 - buyer_cost / direct_cost) * 100``
-        using output pricing, which dominates most bills. Reference price is the
-        highest provider list price seen in /v1/prices (conservative).
+    @property
+    def price_class(self) -> str:
+        if not self.has_market_offer:
+            return CLASS_NO_OFFER
+        if self.is_token_priced:
+            return CLASS_TOKEN
+        if self.media_unit or (self.media_unit_price_usd or 0) > 0:
+            return CLASS_MEDIA
+        return CLASS_UNPRICED
+
+    @property
+    def estimated_discount_pct(self) -> float | None:
+        """Discount below list price, preferring the marketplace's own figure.
+
+        Falls back to computing it from the list price and the live offer. None
+        means "cannot be proven", which upstream also treats as unroutable when a
+        minimum-discount floor is set.
         """
-        if self.reference_output_per_1m is None or self.reference_output_per_1m <= 0:
+        if self.best_live_discount_pct is not None:
+            return float(self.best_live_discount_pct)
+        list_out = self.list_output_per_1m or (self.reference_output_per_1m or 0)
+        market_out = self.market_output_per_1m
+        if not list_out or list_out <= 0 or market_out is None:
             return None
-        return (1 - self.output_per_1m / self.reference_output_per_1m) * 100
+        return (1 - market_out / list_out) * 100
 
     def to_admin_row(self, failed: list[str]) -> dict:
+        discount = self.estimated_discount_pct
         return {
             "id": self.id,
             "name": self.name,
             "provider": self.provider,
             "context_length": self.context_length,
-            "input_per_1m": round(self.input_per_1m, 6),
-            "output_per_1m": round(self.output_per_1m, 6),
-            "reference_input_per_1m": self.reference_input_per_1m,
-            "reference_output_per_1m": self.reference_output_per_1m,
-            "estimated_discount_pct": (
-                round(self.estimated_discount_pct, 1)
-                if self.estimated_discount_pct is not None
+            "price_class": self.price_class,
+            # what the owner actually pays
+            "market_input_per_1m": (
+                round(self.market_input_per_1m, 8)
+                if self.market_input_per_1m is not None
                 else None
             ),
+            "market_output_per_1m": (
+                round(self.market_output_per_1m, 8)
+                if self.market_output_per_1m is not None
+                else None
+            ),
+            # list price, for reference only
+            "list_input_per_1m": round(self.list_input_per_1m, 6),
+            "list_output_per_1m": round(self.list_output_per_1m, 6),
+            "media_unit": self.media_unit,
+            "media_unit_price_usd": self.media_unit_price_usd,
+            "estimated_discount_pct": round(discount, 2) if discount is not None else None,
+            "best_live_discount_pct": self.best_live_discount_pct,
+            "healthy_seller_count": self.healthy_seller_count,
+            "num_sellers": self.num_sellers,
             "passed": not failed,
             "failed_filters": failed,
         }
 
 
 def evaluate(model: ModelInfo, filters: FilterConfig) -> list[str]:
-    """Return the ids of filters this model fails (empty list = passes)."""
+    """Return the ids of every rule this model fails (empty list = passes)."""
     failed: list[str] = []
+
+    # Routability first: no live offer, or not priced per token -> never forward.
+    if not model.has_market_offer:
+        failed.append(NO_MARKET_OFFER)
+    elif not model.is_token_priced:
+        failed.append(NOT_TOKEN_PRICED)
 
     if filters.enable_models_deny and model.id in filters.deny_models:
         failed.append("models_deny")
@@ -119,21 +227,26 @@ def evaluate(model: ModelInfo, filters: FilterConfig) -> list[str]:
         if model.provider.strip().lower() not in allowed:
             failed.append("providers_allow")
 
-    # Price caps are inclusive maxima ("at most"): a price equal to the cap
-    # passes, matching the max_* config names. A price of 0 always passes.
-    if filters.enable_price_input and model.input_per_1m > filters.max_input_per_1m + CAP_EPSILON:
+    # Price caps apply to the ACTUAL marketplace price; inclusive maxima.
+    market_in = model.market_input_per_1m
+    market_out = model.market_output_per_1m
+    if (
+        filters.enable_price_input
+        and market_in is not None
+        and market_in > filters.max_input_per_1m + CAP_EPSILON
+    ):
         failed.append("price_input")
 
     if (
         filters.enable_price_output
-        and model.output_per_1m > filters.max_output_per_1m + CAP_EPSILON
+        and market_out is not None
+        and market_out > filters.max_output_per_1m + CAP_EPSILON
     ):
         failed.append("price_output")
 
     if filters.enable_discount:
         discount = model.estimated_discount_pct
-        # Unknown reference price cannot prove a discount; upstream skips such
-        # offers too, so treat it as a local failure only when a cap is set > 0.
+        # An unprovable discount fails a floor, mirroring upstream behaviour.
         if discount is None:
             if filters.min_discount_pct > 0:
                 failed.append("discount")

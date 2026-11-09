@@ -118,9 +118,11 @@
       <input id="model-search" type="search" placeholder="Search model id or name…" spellcheck="false">
       <label class="check"><input type="checkbox" id="model-passed-only"> passing only</label>
       <select id="model-sort">
-        <option value="output">sort: output price</option>
-        <option value="input">sort: input price</option>
+        <option value="output">sort: market output price</option>
+        <option value="input">sort: market input price</option>
+        <option value="list_output">sort: list output price</option>
         <option value="discount">sort: discount</option>
+        <option value="sellers">sort: healthy sellers</option>
         <option value="context">sort: context</option>
         <option value="name">sort: name</option>
       </select>
@@ -130,8 +132,10 @@
       <table id="model-table">
         <thead>
           <tr>
-            <th>Model</th><th>Provider</th><th class="num">Input $/1M</th>
-            <th class="num">Output $/1M</th><th class="num">Discount</th>
+            <th>Model</th><th>Provider</th>
+            <th class="num">Market in $/1M</th><th class="num">Market out $/1M</th>
+            <th class="num">List in $/1M</th><th class="num">List out $/1M</th>
+            <th class="num">Discount</th><th class="num">Sellers</th>
             <th class="num">Context</th><th>Status</th>
           </tr>
         </thead>

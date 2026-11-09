@@ -1,4 +1,9 @@
-"""Unit tests for the filter engine, on a fixture captured from the live API."""
+"""Unit tests for the filter engine, on a fixture captured from the live API.
+
+The fixture joins three real endpoints for eight models chosen to cover every
+case: token-priced cheap/expensive, token-priced with no list price, media-unit
+priced, unpriced-but-listed, and no live offer at all.
+"""
 
 from __future__ import annotations
 
@@ -7,9 +12,15 @@ from pathlib import Path
 
 import pytest
 
-from surplus.catalog import _reference_from_prices
+from surplus.catalog import _market_from_payload, _reference_from_prices
 from surplus.config import FilterConfig
 from surplus.filters import (
+    CLASS_MEDIA,
+    CLASS_NO_OFFER,
+    CLASS_TOKEN,
+    CLASS_UNPRICED,
+    NO_MARKET_OFFER,
+    NOT_TOKEN_PRICED,
     UNKNOWN_MODEL,
     ModelInfo,
     evaluate,
@@ -22,17 +33,19 @@ FIXTURE = Path(__file__).parent / "fixtures" / "catalog_sample.json"
 
 @pytest.fixture(scope="module")
 def catalog() -> dict[str, ModelInfo]:
-    """Real catalog entries + real reference prices, normalized."""
     data = json.loads(FIXTURE.read_text(encoding="utf-8"))
     references = _reference_from_prices(data["prices"])
+    markets = _market_from_payload(data["marketplace"])
     return {
-        entry["id"]: ModelInfo.from_catalog_entry(entry, references.get(entry["id"]))
+        entry["id"]: ModelInfo.from_catalog_entry(
+            entry, references.get(entry["id"]), markets.get(entry["id"])
+        )
         for entry in data["models"]["data"]
     }
 
 
 def no_filters() -> FilterConfig:
-    """Every filter disabled: nothing may be rejected."""
+    """Every toggleable filter disabled: only the always-on rules may fire."""
     return FilterConfig(
         enable_price_input=False,
         enable_price_output=False,
@@ -45,59 +58,201 @@ def no_filters() -> FilterConfig:
     )
 
 
-def test_per_token_pricing_converted_to_per_1m(catalog: dict[str, ModelInfo]) -> None:
-    # 0.0000000700 per token == $0.07 per 1M tokens
-    assert catalog["openai-gpt-oss-120b"].input_per_1m == pytest.approx(0.07)
-    assert catalog["openai-gpt-oss-120b"].output_per_1m == pytest.approx(0.30)
-    assert catalog["gpt-5.5-pro"].output_per_1m == pytest.approx(180.0)
+# ------------------------------------------------------------ price semantics
 
 
-def test_all_disabled_passes_everything(catalog: dict[str, ModelInfo]) -> None:
+def test_market_prices_converted_from_microdollars(catalog: dict[str, ModelInfo]) -> None:
+    """best_input_per_1m is microdollars per 1M tokens -> divide by 1e6."""
+    qwen = catalog["qwen3.8-max-0902"]
+    assert qwen.market_input_per_1m == pytest.approx(0.002163)
+    assert qwen.market_output_per_1m == pytest.approx(0.006489)
+    # the catalog list price is a different, much larger number
+    assert qwen.list_input_per_1m == pytest.approx(2.0)
+    assert qwen.list_output_per_1m == pytest.approx(6.0)
+
+
+@pytest.mark.parametrize(
+    ("micro", "typed"),
+    [
+        (2163, 0.002163),
+        (6489, 0.006489),
+        (69, 0.000069),
+        (57000, 0.057),
+        (7182000, 7.182),
+    ],
+)
+def test_conversion_matches_the_decimal_a_human_would_type(micro: int, typed: float) -> None:
+    """A cap typed as a decimal must compare exactly against the converted price."""
+    entry = {
+        "id": "m",
+        "pricing": {"prompt": "0", "completion": "0"},
+    }
+    model = ModelInfo.from_catalog_entry(
+        entry, None, {"input_micro_per_1m": micro, "output_micro_per_1m": micro}
+    )
+    assert model.market_input_per_1m == typed
+    assert evaluate(model, FilterConfig(max_input_per_1m=typed, max_output_per_1m=typed)) == []
+
+
+def test_price_classes(catalog: dict[str, ModelInfo]) -> None:
+    assert catalog["qwen3.8-max-0902"].price_class == CLASS_TOKEN
+    assert catalog["gpt-5-image-mini"].price_class == CLASS_TOKEN
+    assert catalog["flux-2-max-edit"].price_class == CLASS_MEDIA
+    assert catalog["venice-flux-3-image"].price_class == CLASS_UNPRICED
+    assert catalog["deepseek-r1"].price_class == CLASS_NO_OFFER
+
+
+def test_media_unit_price_is_surfaced(catalog: dict[str, ModelInfo]) -> None:
+    flux = catalog["flux-2-max-edit"]
+    assert flux.media_unit == "image"
+    assert flux.media_unit_price_usd == pytest.approx(0.096)
+
+
+# ------------------------------------------------------- always-on rejection
+
+
+def test_unroutable_models_rejected_even_with_all_filters_off(
+    catalog: dict[str, ModelInfo]
+) -> None:
     filters = no_filters()
-    assert all(evaluate(model, filters) == [] for model in catalog.values())
+    assert evaluate(catalog["deepseek-r1"], filters) == [NO_MARKET_OFFER]
+    assert evaluate(catalog["flux-2-max-edit"], filters) == [NOT_TOKEN_PRICED]
+    assert evaluate(catalog["venice-flux-3-image"], filters) == [NOT_TOKEN_PRICED]
+    assert evaluate(catalog["qwen3.8-max-0902"], filters) == []
 
 
-def test_default_caps_match_live_expectations(catalog: dict[str, ModelInfo]) -> None:
-    filters = FilterConfig(max_input_per_1m=2.0, max_output_per_1m=10.0)
+def test_no_offer_rejection_is_not_the_unknown_model_opt_in(
+    catalog: dict[str, ModelInfo]
+) -> None:
+    """allow_unknown_models must not smuggle in models with no live offer."""
+    filters = no_filters()
+    filters.allow_unknown_models = True
+    assert evaluate(catalog["deepseek-r1"], filters) == [NO_MARKET_OFFER]
+
+
+# ------------------------------------------------------------- price caps
+
+
+def test_caps_use_market_price_not_list_price(catalog: dict[str, ModelInfo]) -> None:
+    """qwen3.8-max-0902 lists at $2/$6 but trades at $0.0022/$0.0065 -> passes."""
+    filters = FilterConfig(max_input_per_1m=0.1, max_output_per_1m=0.5)
+    assert evaluate(catalog["qwen3.8-max-0902"], filters) == []
     assert evaluate(catalog["openai-gpt-oss-120b"], filters) == []
-    assert evaluate(catalog["minimax-m2.1"], filters) == []  # zero priced passes
-    assert "price_input" in evaluate(catalog["gpt-5-image-mini"], filters)  # $2.50/1M in
-    assert evaluate(catalog["gpt-5.5-pro"], filters) == ["price_input", "price_output"]
-
-
-def test_zero_priced_model_passes_any_cap(catalog: dict[str, ModelInfo]) -> None:
-    filters = FilterConfig(max_input_per_1m=0.000001, max_output_per_1m=0.000001)
     assert evaluate(catalog["minimax-m2.1"], filters) == []
 
 
+def test_expensive_models_rejected_on_market_price(catalog: dict[str, ModelInfo]) -> None:
+    filters = FilterConfig(max_input_per_1m=0.1, max_output_per_1m=0.5)
+    # market $7.182 / $43.092 per 1M
+    assert evaluate(catalog["gpt-5.5-pro"], filters) == ["price_input", "price_output"]
+    # market $0.625 in (over cap) / $0.50 out (exactly at cap -> passes)
+    assert evaluate(catalog["gpt-5-image-mini"], filters) == ["price_input"]
+
+
 def test_cap_is_inclusive_at_the_boundary(catalog: dict[str, ModelInfo]) -> None:
-    """`max_*` means "at most": a price exactly at the cap passes (owner decision)."""
-    model = catalog["openai-gpt-oss-120b"]  # 0.07 in / 0.30 out per 1M
-    assert evaluate(model, FilterConfig(max_input_per_1m=0.07, max_output_per_1m=10.0)) == []
-    assert evaluate(model, FilterConfig(max_input_per_1m=10.0, max_output_per_1m=0.30)) == []
-    # a hair above the cap still fails
-    assert evaluate(model, FilterConfig(max_input_per_1m=0.0699, max_output_per_1m=10.0)) == [
-        "price_input"
-    ]
-    assert evaluate(model, FilterConfig(max_input_per_1m=10.0, max_output_per_1m=0.2999)) == [
-        "price_output"
-    ]
+    """`max_*` means "at most": exactly at the cap passes (owner decision)."""
+    qwen_out = catalog["qwen3.8-max-0902"].market_output_per_1m
+    at_cap = FilterConfig(
+        enable_price_input=False, max_output_per_1m=qwen_out, enable_discount=False
+    )
+    assert evaluate(catalog["qwen3.8-max-0902"], at_cap) == []
+    just_under = FilterConfig(
+        enable_price_input=False, max_output_per_1m=qwen_out - 1e-6, enable_discount=False
+    )
+    assert evaluate(catalog["qwen3.8-max-0902"], just_under) == ["price_output"]
 
 
-def test_cap_tolerance_absorbs_float_conversion_noise() -> None:
-    """0.00000057 * 1e6 == 0.5700000000000001, which must still pass a 0.57 cap."""
-    entry = {
-        "id": "float-noise-model",
-        "name": "Float noise",
-        "provider": "Test",
-        "context_length": 1000,
-        "pricing": {"prompt": "0.00000057", "completion": "0.0000021"},
-    }
-    model = ModelInfo.from_catalog_entry(entry)
-    # the raw float really is a hair above the decimal value the cap expresses
-    assert model.input_per_1m > 0.57
-    assert model.output_per_1m < 2.1  # 2.0999999999999996 - noise goes both ways
-    assert evaluate(model, FilterConfig(max_input_per_1m=0.57, max_output_per_1m=2.1)) == []
+def test_very_tight_caps_keep_only_the_cheapest(catalog: dict[str, ModelInfo]) -> None:
+    filters = FilterConfig(max_input_per_1m=0.0001, max_output_per_1m=0.0003)
+    assert evaluate(catalog["openai-gpt-oss-120b"], filters) == []  # 0.000069 / 0.000297
+    assert evaluate(catalog["qwen3.8-max-0902"], filters) == ["price_input", "price_output"]
+
+
+def test_zero_market_price_passes_caps(catalog: dict[str, ModelInfo]) -> None:
+    """A genuinely $0 offer is the cheapest possible, so it passes any cap."""
+    free = ModelInfo.from_catalog_entry(
+        {"id": "free-model", "pricing": {"prompt": "0.0000030000", "completion": "0.0000090000"}},
+        None,
+        {"input_micro_per_1m": 0, "output_micro_per_1m": 0, "healthy_seller_count": 1},
+    )
+    # no token price at all -> unpriced, rejected by the always-on rule
+    assert evaluate(free, FilterConfig(max_input_per_1m=0.0001, max_output_per_1m=0.0001)) == [
+        NOT_TOKEN_PRICED
+    ]
+    priced_zero_in = ModelInfo.from_catalog_entry(
+        {"id": "zero-in", "pricing": {"prompt": "0", "completion": "0"}},
+        None,
+        {"input_micro_per_1m": 0, "output_micro_per_1m": 500},
+    )
+    assert evaluate(
+        priced_zero_in, FilterConfig(max_input_per_1m=0.0001, max_output_per_1m=0.001)
+    ) == []
+
+
+# ------------------------------------------------------------------ discount
+
+
+def test_discount_uses_the_marketplace_figure(catalog: dict[str, ModelInfo]) -> None:
+    filters = no_filters()
+    filters.enable_discount = True
+    filters.min_discount_pct = 90
+    assert evaluate(catalog["qwen3.8-max-0902"], filters) == []  # 99.89%
+    assert evaluate(catalog["gpt-5.5-pro"], filters) == ["discount"]  # 76.06%
+    # no upstream figure, but /v1/prices has a reference -> discount is provable
+    assert catalog["minimax-m2.1"].best_live_discount_pct is None
+    assert catalog["minimax-m2.1"].estimated_discount_pct is not None
+    assert evaluate(catalog["minimax-m2.1"], filters) == []
+
+
+def test_unprovable_discount_fails_the_floor() -> None:
+    """No marketplace figure and no list/reference price -> cannot prove a discount."""
+    model = ModelInfo.from_catalog_entry(
+        {"id": "opaque", "pricing": {"prompt": "0", "completion": "0"}},
+        None,
+        {"input_micro_per_1m": 1000, "output_micro_per_1m": 2000},
+    )
+    assert model.estimated_discount_pct is None
+    assert evaluate(model, FilterConfig(enable_discount=True, min_discount_pct=1)) == ["discount"]
+    # a zero floor is satisfied even without proof
+    assert evaluate(model, FilterConfig(enable_discount=True, min_discount_pct=0)) == []
+
+
+def test_discount_falls_back_to_list_vs_market() -> None:
+    model = ModelInfo.from_catalog_entry(
+        {
+            "id": "fallback",
+            "pricing": {"prompt": "0.0000020000", "completion": "0.0000060000"},
+        },
+        None,
+        # market: $2 in / $3 out per 1M, against a list price of $2 / $6
+        {"input_micro_per_1m": 2_000_000, "output_micro_per_1m": 3_000_000},
+    )
+    assert model.market_output_per_1m == pytest.approx(3.0)
+    assert model.estimated_discount_pct == pytest.approx(50.0)
+    discount_only = FilterConfig(
+        enable_price_input=False, enable_price_output=False, enable_discount=True
+    )
+    discount_only.min_discount_pct = 50
+    assert evaluate(model, discount_only) == []
+    discount_only.min_discount_pct = 51
+    assert evaluate(model, discount_only) == ["discount"]
+
+
+def test_discount_prefers_marketplace_figure_over_computed() -> None:
+    model = ModelInfo.from_catalog_entry(
+        {"id": "both", "pricing": {"prompt": "0.0000020000", "completion": "0.0000060000"}},
+        None,
+        {
+            "input_micro_per_1m": 2_000_000,
+            "output_micro_per_1m": 3_000_000,
+            "best_live_discount_pct": 42.0,
+        },
+    )
+    # computed from prices would be 50.0; upstream's own figure wins
+    assert model.estimated_discount_pct == pytest.approx(42.0)
+
+
+# ------------------------------------------------------- list-based filters
 
 
 def test_deny_wins_over_allow(catalog: dict[str, ModelInfo]) -> None:
@@ -106,57 +261,28 @@ def test_deny_wins_over_allow(catalog: dict[str, ModelInfo]) -> None:
     filters.allow_models = ["minimax-m2.1", "gpt-5.5-pro"]
     filters.enable_models_deny = True
     filters.deny_models = ["minimax-m2.1"]
-    # listed in BOTH: deny wins, the model is rejected
     assert evaluate(catalog["minimax-m2.1"], filters) == ["models_deny"]
     assert evaluate(catalog["gpt-5.5-pro"], filters) == []
-    # not in the allow list at all: rejected by the allow filter
-    assert evaluate(catalog["openai-gpt-oss-120b"], filters) == ["models_allow"]
-
-
-def test_allow_list_filters_unlisted_models(catalog: dict[str, ModelInfo]) -> None:
-    filters = no_filters()
-    filters.enable_models_allow = True
-    filters.allow_models = ["openai-gpt-oss-120b"]
-    assert evaluate(catalog["gpt-5.5-pro"], filters) == ["models_allow"]
+    assert evaluate(catalog["qwen3.8-max-0902"], filters) == ["models_allow"]
 
 
 def test_provider_allow_list_is_case_insensitive(catalog: dict[str, ModelInfo]) -> None:
     filters = no_filters()
     filters.enable_providers_allow = True
-    filters.allow_providers = ["minimax"]
-    assert evaluate(catalog["minimax-m2.1"], filters) == []
-    assert evaluate(catalog["openai-gpt-oss-120b"], filters) == ["providers_allow"]
+    filters.allow_providers = ["qwen"]
+    assert evaluate(catalog["qwen3.8-max-0902"], filters) == []
+    assert evaluate(catalog["minimax-m2.1"], filters) == ["providers_allow"]
 
 
-def test_context_min_rejects_small_and_zero_context(catalog: dict[str, ModelInfo]) -> None:
+def test_context_min(catalog: dict[str, ModelInfo]) -> None:
     filters = no_filters()
     filters.enable_context_min = True
     filters.min_context_length = 32000
-    assert evaluate(catalog["minimax-m2.1"], filters) == []  # 198000
+    assert evaluate(catalog["qwen3.8-max-0902"], filters) == []  # 1,000,000
     assert evaluate(catalog["gpt-5-image-mini"], filters) == ["context_min"]  # 0
 
 
-def test_discount_filter_uses_reference_prices(catalog: dict[str, ModelInfo]) -> None:
-    filters = no_filters()
-    filters.enable_discount = True
-    filters.min_discount_pct = 30
-
-    # minimax-m2.1: 0.0 output vs 1.5 reference -> 100% discount
-    assert evaluate(catalog["minimax-m2.1"], filters) == []
-    # gpt-5.5-pro: 180 output vs 180 reference -> 0% discount
-    assert evaluate(catalog["gpt-5.5-pro"], filters) == ["discount"]
-    # gpt-5-image-mini has no reference price: cannot prove a discount
-    assert evaluate(catalog["gpt-5-image-mini"], filters) == ["discount"]
-
-
-def test_discount_none_when_no_reference_price(catalog: dict[str, ModelInfo]) -> None:
-    assert catalog["gpt-5-image-mini"].estimated_discount_pct is None
-
-
-def test_estimated_discount_value(catalog: dict[str, ModelInfo]) -> None:
-    # openai-gpt-oss-120b: 0.30 output vs 0.30 reference -> 0% discount
-    assert catalog["openai-gpt-oss-120b"].estimated_discount_pct == pytest.approx(0.0)
-    assert catalog["minimax-m2.1"].estimated_discount_pct == pytest.approx(100.0)
+# --------------------------------------------------------------------- gate
 
 
 def test_unknown_model_fails_closed(catalog: dict[str, ModelInfo]) -> None:
@@ -172,13 +298,19 @@ def test_unknown_model_allowed_when_opted_in(catalog: dict[str, ModelInfo]) -> N
     assert failed == []
 
 
-def test_known_model_gate_reports_every_failure(catalog: dict[str, ModelInfo]) -> None:
-    filters = FilterConfig(max_input_per_1m=1.0, max_output_per_1m=5.0)
+def test_gate_reports_every_failed_rule(catalog: dict[str, ModelInfo]) -> None:
+    filters = FilterConfig(max_input_per_1m=0.001, max_output_per_1m=0.005)
     filters.enable_context_min = True
-    filters.min_context_length = 50000
-    passed, failed = evaluate_by_id("gpt-5-image-mini", catalog, filters)
+    filters.min_context_length = 2_000_000
+    passed, failed = evaluate_by_id("qwen3.8-max-0902", catalog, filters)
     assert passed is False
-    assert failed == ["price_input", "context_min"]
+    assert failed == ["price_input", "price_output", "context_min"]
+
+
+def test_gate_blocks_a_model_with_no_offer(catalog: dict[str, ModelInfo]) -> None:
+    passed, failed = evaluate_by_id("deepseek-r1", catalog, FilterConfig())
+    assert passed is False
+    assert failed == [NO_MARKET_OFFER]
 
 
 @pytest.mark.parametrize(
@@ -200,9 +332,17 @@ def test_minimum_discount_prefix(enabled: bool, pct, expected: str) -> None:
     assert minimum_discount_path_prefix(filters) == expected
 
 
-def test_admin_row_exposes_reasons(catalog: dict[str, ModelInfo]) -> None:
-    row = catalog["gpt-5.5-pro"].to_admin_row(["price_input", "price_output"])
-    assert row["passed"] is False
-    assert row["failed_filters"] == ["price_input", "price_output"]
-    assert row["input_per_1m"] == pytest.approx(30.0)
-    assert row["output_per_1m"] == pytest.approx(180.0)
+def test_admin_row_exposes_market_list_and_class(catalog: dict[str, ModelInfo]) -> None:
+    row = catalog["qwen3.8-max-0902"].to_admin_row([])
+    assert row["price_class"] == CLASS_TOKEN
+    assert row["market_input_per_1m"] == pytest.approx(0.002163)
+    assert row["market_output_per_1m"] == pytest.approx(0.006489)
+    assert row["list_input_per_1m"] == pytest.approx(2.0)
+    assert row["list_output_per_1m"] == pytest.approx(6.0)
+    assert row["estimated_discount_pct"] == pytest.approx(99.89)
+    assert row["healthy_seller_count"] == 233
+    assert row["passed"] is True
+
+    blocked = catalog["gpt-5.5-pro"].to_admin_row(["price_input", "price_output"])
+    assert blocked["passed"] is False
+    assert blocked["failed_filters"] == ["price_input", "price_output"]

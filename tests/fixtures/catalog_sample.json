@@ -2,6 +2,66 @@
  "models": {
   "data": [
    {
+    "id": "qwen3.8-max-0902",
+    "name": "Qwen: Qwen3.8 Max (0902)",
+    "created": 1735689600,
+    "description": "Qwen3.8 Max 0902 is an updated snapshot of Qwen3.8 Max from Alibaba's Qwen team. It is a 2.4-trillion-parameter mixture-of-experts model that accepts text, image, and video input and returns text,...",
+    "context_length": 1000000,
+    "architecture": {
+     "modality": "text+image+video->text",
+     "input_modalities": [
+      "text",
+      "image",
+      "video"
+     ],
+     "output_modalities": [
+      "text"
+     ],
+     "tokenizer": "Qwen",
+     "instruct_type": null
+    },
+    "pricing": {
+     "prompt": "0.0000020000",
+     "completion": "0.0000060000",
+     "input_cache_read": "0.0000002500",
+     "input_cache_write": "0.0000020000"
+    },
+    "top_provider": {
+     "context_length": 1000000,
+     "max_completion_tokens": 131072,
+     "is_moderated": false
+    },
+    "supported_parameters": [
+     "frequency_penalty",
+     "include_reasoning",
+     "logprobs",
+     "max_tokens",
+     "presence_penalty",
+     "reasoning",
+     "reasoning_effort",
+     "response_format",
+     "seed",
+     "stop",
+     "structured_outputs",
+     "temperature",
+     "tool_choice",
+     "tools",
+     "top_k",
+     "top_logprobs",
+     "top_p"
+    ],
+    "supported_features": [
+     "streaming",
+     "vision",
+     "tools",
+     "reasoning",
+     "json_mode"
+    ],
+    "provider": "Qwen",
+    "added_at": 1788598825,
+    "per_request_limits": null
+   },
+   {
     "id": "openai-gpt-oss-120b",
     "name": "OpenAI GPT OSS 120B",
     "created": 1735689600,
@@ -102,6 +162,61 @@
     "per_request_limits": null
    },
    {
+    "id": "gpt-5.5-pro",
+    "name": "GPT-5.5 Pro",
+    "created": 1735689600,
+    "description": "GPT-5.5 Pro \u2014 OpenAI advanced reasoning model with 1M context and text/image inputs for complex, high-stakes tasks.",
+    "context_length": 1000000,
+    "architecture": {
+     "modality": "text+image->text",
+     "input_modalities": [
+      "text",
+      "image"
+     ],
+     "output_modalities": [
+      "text"
+     ],
+     "tokenizer": "GPT",
+     "instruct_type": null
+    },
+    "pricing": {
+     "prompt": "0.0000300000",
+     "completion": "0.0001800000",
+     "input_cache_read": "0.0000045000",
+     "input_cache_write": "0.0000300000"
+    },
+    "top_provider": {
+     "context_length": 1000000,
+     "max_completion_tokens": 128000,
+     "is_moderated": false
+    },
+    "supported_parameters": [
+     "max_tokens",
+     "temperature",
+     "top_p",
+     "frequency_penalty",
+     "presence_penalty",
+     "logit_bias",
+     "logprobs",
+     "top_logprobs",
+     "stop",
+     "tools",
+     "tool_choice",
+     "response_format",
+     "seed",
+     "structured_outputs"
+    ],
+    "supported_features": [
+     "streaming",
+     "tools",
+     "vision",
+     "reasoning"
+    ],
+    "provider": "OpenAI",
+    "added_at": 1778943112,
+    "per_request_limits": null
+   },
+   {
     "id": "gpt-5-image-mini",
     "name": "GPT-5 Image Mini",
     "created": 1735689600,
@@ -156,57 +271,186 @@
     "per_request_limits": null
    },
    {
-    "id": "gpt-5.5-pro",
-    "name": "GPT-5.5 Pro",
+    "id": "flux-2-max-edit",
+    "name": "Flux 2 Max \u2014 Edit (Venice)",
     "created": 1735689600,
-    "description": "GPT-5.5 Pro \u2014 OpenAI advanced reasoning model with 1M context and text/image inputs for complex, high-stakes tasks.",
-    "context_length": 1000000,
+    "description": "Flux 2 Max \u2014 Black Forest Labs\u2019s image-editing model that transforms a source image from a text prompt, and can compose multiple input images.",
+    "context_length": 0,
     "architecture": {
-     "modality": "text+image->text",
+     "modality": "text->image",
      "input_modalities": [
-      "text",
+      "text"
+     ],
+     "output_modalities": [
       "image"
+     ],
+     "tokenizer": "Other",
+     "instruct_type": null
+    },
+    "pricing": {
+     "prompt": "0",
+     "completion": "0",
+     "image": "0.19",
+     "media_unit": "image"
+    },
+    "top_provider": {
+     "context_length": 0,
+     "max_completion_tokens": 0,
+     "is_moderated": false
+    },
+    "supported_parameters": [
+     "prompt",
+     "model",
+     "n",
+     "size",
+     "quality",
+     "style",
+     "response_format"
+    ],
+    "supported_features": [
+     "image",
+     "image_edit",
+     "image-to-image",
+     "quality",
+     "response_format",
+     "aspect_ratio",
+     "multi-image",
+     "reference_images"
+    ],
+    "provider": "Black Forest Labs",
+    "sizes": [
+     "1024x1024",
+     "1024x768",
+     "768x1024",
+     "1536x1024",
+     "1024x1536"
+    ],
+    "aspect_ratios": [
+     "auto",
+     "1:1",
+     "3:2",
+     "16:9",
+     "21:9",
+     "9:16",
+     "2:3",
+     "3:4",
+     "4:5"
+    ],
+    "metering": "per_image",
+    "added_at": 1784918490,
+    "per_request_limits": null
+   },
+   {
+    "id": "venice-flux-3-image",
+    "name": "Flux 3 (Venice)",
+    "created": 1735689600,
+    "description": "Flux 3 image generation on Venice.",
+    "context_length": 0,
+    "architecture": {
+     "modality": "text->image",
+     "input_modalities": [
+      "text"
+     ],
+     "output_modalities": [
+      "image"
+     ],
+     "tokenizer": "Other",
+     "instruct_type": null
+    },
+    "pricing": {
+     "prompt": "0",
+     "completion": "0",
+     "image": "0.12",
+     "media_unit": "image"
+    },
+    "top_provider": {
+     "context_length": 0,
+     "max_completion_tokens": 0,
+     "is_moderated": false
+    },
+    "supported_parameters": [
+     "prompt",
+     "model",
+     "n",
+     "size",
+     "quality",
+     "style",
+     "response_format"
+    ],
+    "supported_features": [
+     "image",
+     "resolution",
+     "response_format",
+     "aspect_ratio"
+    ],
+    "provider": "Black Forest Labs",
+    "sizes": [
+     "1024x1024",
+     "1024x768",
+     "768x1024",
+     "1536x1024",
+     "1024x1536"
+    ],
+    "aspect_ratios": [
+     "1:1",
+     "3:2",
+     "16:9",
+     "21:9",
+     "9:16",
+     "2:3",
+     "3:4",
+     "4:5"
+    ],
+    "resolutions": [
+     "1K",
+     "2K",
+     "4K"
+    ],
+    "metering": "per_image",
+    "added_at": 1792654982,
+    "per_request_limits": null
+   },
+   {
+    "id": "deepseek-r1",
+    "name": "DeepSeek R1",
+    "created": 1735689600,
+    "description": "DeepSeek R1 \u2014 reasoning model with chain-of-thought. Excels at math, code, and complex logic.",
+    "context_length": 160000,
+    "architecture": {
+     "modality": "text->text",
+     "input_modalities": [
+      "text"
      ],
      "output_modalities": [
       "text"
      ],
-     "tokenizer": "GPT",
+     "tokenizer": "DeepSeek",
      "instruct_type": null
     },
     "pricing": {
-     "prompt": "0.0000300000",
-     "completion": "0.0001800000",
-     "input_cache_read": "0.0000045000",
-     "input_cache_write": "0.0000300000"
+     "prompt": "0.0000000000",
+     "completion": "0.0000000000",
+     "input_cache_read": "0.0000000000",
+     "input_cache_write": "0.0000000000"
     },
     "top_provider": {
-     "context_length": 1000000,
-     "max_completion_tokens": 128000,
+     "context_length": 160000,
+     "max_completion_tokens": 32768,
      "is_moderated": false
     },
     "supported_parameters": [
      "max_tokens",
      "temperature",
      "top_p",
-     "frequency_penalty",
-     "presence_penalty",
-     "logit_bias",
-     "logprobs",
-     "top_logprobs",
      "stop",
-     "tools",
-     "tool_choice",
-     "response_format",
-     "seed",
-     "structured_outputs"
+     "include_reasoning",
+     "reasoning"
     ],
     "supported_features": [
      "streaming",
-     "tools",
-     "vision",
      "reasoning"
     ],
-    "provider": "OpenAI",
+    "provider": "DeepSeek",
     "added_at": 1778943112,
     "per_request_limits": null
    }
@@ -214,6 +458,23 @@
  },
  "prices": {
   "models": [
+   {
+    "model": "qwen3.8-max-0902",
+    "displayName": "Qwen: Qwen3.8 Max (0902)",
+    "modelProvider": "Qwen",
+    "providers": [
+     {
+      "provider": "openrouter",
+      "providerName": "OpenRouter",
+      "providerModelId": "qwen/qwen3.8-max-0902",
+      "pricing": {
+       "input": 2,
+       "output": 6,
+       "cacheRead": 0.25
+      }
+     }
+    ]
+   },
    {
     "model": "openai-gpt-oss-120b",
     "displayName": "OpenAI GPT OSS 120B",
@@ -305,6 +566,23 @@
     ]
    },
    {
+    "model": "gpt-5.5-pro",
+    "displayName": "GPT-5.5 Pro",
+    "modelProvider": "OpenAI",
+    "providers": [
+     {
+      "provider": "venice",
+      "providerName": "Venice AI",
+      "providerModelId": "openai-gpt-55-pro",
+      "pricing": {
+       "input": 30,
+       "output": 180,
+       "cacheRead": 4.5
+      }
+     }
+    ]
+   },
+   {
     "model": "gpt-5-image-mini",
     "displayName": "GPT-5 Image Mini",
     "modelProvider": "OpenAI",
@@ -321,18 +599,89 @@
     }
    },
    {
-    "model": "gpt-5.5-pro",
-    "displayName": "GPT-5.5 Pro",
-    "modelProvider": "OpenAI",
+    "model": "flux-2-max-edit",
+    "displayName": "Flux 2 Max \u2014 Edit (Venice)",
+    "modelProvider": "Black Forest Labs",
+    "providers": [],
+    "mediaType": "image",
+    "mediaPricing": {
+     "perImageUsd": 0.19,
+     "per1kCharsUsd": 0,
+     "perMinuteUsd": 0,
+     "per1MTokensUsd": 0,
+     "inputPer1MUsd": 0,
+     "outputPer1MUsd": 0,
+     "outputPerMpUsd": 0
+    }
+   },
+   {
+    "model": "venice-flux-3-image",
+    "displayName": "Flux 3 (Venice)",
+    "modelProvider": "Black Forest Labs",
+    "providers": [],
+    "mediaType": "image",
+    "mediaPricing": {
+     "perImageUsd": 0.12,
+     "per1kCharsUsd": 0,
+     "perMinuteUsd": 0,
+     "per1MTokensUsd": 0,
+     "inputPer1MUsd": 0,
+     "outputPer1MUsd": 0,
+     "outputPerMpUsd": 0
+    }
+   },
+   {
+    "model": "deepseek-r1",
+    "displayName": "DeepSeek R1",
+    "modelProvider": "DeepSeek",
     "providers": [
      {
-      "provider": "venice",
-      "providerName": "Venice AI",
-      "providerModelId": "openai-gpt-55-pro",
+      "provider": "deepseek",
+      "providerName": "DeepSeek",
+      "providerModelId": "deepseek-reasoner",
       "pricing": {
-       "input": 30,
-       "output": 180,
-       "cacheRead": 4.5
+       "input": 0.55,
+       "output": 2.19,
+       "cacheRead": 0.14
+      }
+     },
+     {
+      "provider": "together",
+      "providerName": "Together AI",
+      "providerModelId": "deepseek-ai/DeepSeek-R1",
+      "pricing": {
+       "input": 0.55,
+       "output": 2.19,
+       "cacheRead": 0.14
+      }
+     },
+     {
+      "provider": "fireworks",
+      "providerName": "Fireworks AI",
+      "providerModelId": "accounts/fireworks/models/deepseek-r1",
+      "pricing": {
+       "input": 0.55,
+       "output": 2.19,
+       "cacheRead": 0.14
+      }
+     },
+     {
+      "provider": "groq",
+      "providerName": "Groq",
+      "providerModelId": "deepseek-r1-distill-llama-70b",
+      "pricing": {
+       "input": 0.55,
+       "output": 2.19,
+       "cacheRead": 0.14
+      }
+     },
+     {
+      "provider": "openrouter",
+      "providerName": "OpenRouter",
+      "providerModelId": "deepseek/deepseek-r1",
+      "pricing": {
+       "input": 0.7,
+       "output": 2.5
       }
      }
     ]
@@ -358,6 +707,104 @@
    "venice",
    "zai"
   ],
-  "updated_at": "2026-11-08T23:34:21.458Z"
+  "updated_at": "2026-11-09T01:37:43.870Z"
+ },
+ "marketplace": {
+  "data": {
+   "markets": [
+    {
+     "model": "qwen3.8-max-0902",
+     "best_input_per_1m": 2163,
+     "best_output_per_1m": 6489,
+     "best_media_unit_price": null,
+     "media_unit": null,
+     "direct_input_per_1m": 2000000,
+     "direct_output_per_1m": 6000000,
+     "best_live_discount_pct": 99.89,
+     "best_discount_pct": 99.96,
+     "healthy_seller_count": 233,
+     "num_sellers": 32
+    },
+    {
+     "model": "openai-gpt-oss-120b",
+     "best_input_per_1m": 69,
+     "best_output_per_1m": 297,
+     "best_media_unit_price": null,
+     "media_unit": null,
+     "direct_input_per_1m": 70000,
+     "direct_output_per_1m": 300000,
+     "best_live_discount_pct": 99.9,
+     "best_discount_pct": 99.95,
+     "healthy_seller_count": 1660,
+     "num_sellers": 89
+    },
+    {
+     "model": "minimax-m2.1",
+     "best_input_per_1m": 356,
+     "best_output_per_1m": 1426,
+     "best_media_unit_price": null,
+     "media_unit": null,
+     "direct_input_per_1m": 0,
+     "direct_output_per_1m": 0,
+     "best_live_discount_pct": null,
+     "best_discount_pct": null,
+     "healthy_seller_count": 153,
+     "num_sellers": 27
+    },
+    {
+     "model": "gpt-5.5-pro",
+     "best_input_per_1m": 7182000,
+     "best_output_per_1m": 43092000,
+     "best_media_unit_price": null,
+     "media_unit": null,
+     "direct_input_per_1m": 30000000,
+     "direct_output_per_1m": 180000000,
+     "best_live_discount_pct": 76.06,
+     "best_discount_pct": 99.11,
+     "healthy_seller_count": 54,
+     "num_sellers": 40
+    },
+    {
+     "model": "gpt-5-image-mini",
+     "best_input_per_1m": 625000,
+     "best_output_per_1m": 500000,
+     "best_media_unit_price": null,
+     "media_unit": null,
+     "direct_input_per_1m": 2500000,
+     "direct_output_per_1m": 2000000,
+     "best_live_discount_pct": 75,
+     "best_discount_pct": 81.21,
+     "healthy_seller_count": 9,
+     "num_sellers": 7
+    },
+    {
+     "model": "flux-2-max-edit",
+     "best_input_per_1m": 0,
+     "best_output_per_1m": 0,
+     "best_media_unit_price": 96000,
+     "media_unit": "image",
+     "direct_input_per_1m": 0,
+     "direct_output_per_1m": 0,
+     "best_live_discount_pct": 49.47,
+     "best_discount_pct": 75.25,
+     "healthy_seller_count": 2,
+     "num_sellers": 2
+    },
+    {
+     "model": "venice-flux-3-image",
+     "best_input_per_1m": 0,
+     "best_output_per_1m": 0,
+     "best_media_unit_price": null,
+     "media_unit": null,
+     "direct_input_per_1m": 0,
+     "direct_output_per_1m": 0,
+     "best_live_discount_pct": null,
+     "best_discount_pct": null,
+     "healthy_seller_count": 2,
+     "num_sellers": 2
+    }
+   ],
+   "computed_at": 1794187807891
+  }
  }
 }

@@ -73,8 +73,48 @@ state = State()
 
 def reload_config() -> AppConfig:
     """Re-read config.ini from disk (used after the admin UI saves)."""
+    global _config_mtime
     state.cfg = load_config(CONFIG_PATH)
+    _config_mtime = _stat_mtime(CONFIG_PATH)
     return state.cfg
+
+
+def _stat_mtime(path: Path) -> float | None:
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return None
+
+
+def maybe_reload_config() -> AppConfig:
+    """Pick up edits made directly to config.ini, without a restart.
+
+    One stat() per request; the file is only re-parsed when its mtime moved.
+    Host/port changes still need a restart (the socket is already bound), but
+    filters, caps, TTL and the API key apply immediately.
+    """
+    global _config_mtime
+    mtime = _stat_mtime(CONFIG_PATH)
+    if mtime is None:
+        return state.cfg
+    if _config_mtime is None:
+        _config_mtime = mtime
+        return state.cfg
+    if mtime != _config_mtime:
+        _config_mtime = mtime
+        previous = state.cfg
+        state.cfg = load_config(CONFIG_PATH)
+        log.info(
+            "config.ini changed on disk; reloaded (caps %s/%s -> %s/%s)",
+            previous.filters.max_input_per_1m,
+            previous.filters.max_output_per_1m,
+            state.cfg.filters.max_input_per_1m,
+            state.cfg.filters.max_output_per_1m,
+        )
+    return state.cfg
+
+
+_config_mtime: float | None = _stat_mtime(CONFIG_PATH)
 
 
 def api_key_or_error() -> tuple[str | None, JSONResponse | None]:
@@ -144,8 +184,15 @@ def gate_model(model_id: str | None) -> JSONResponse | None:
     model = state.catalog.models.get(model_id)
     detail = ""
     if model is not None:
+        market_in = model.market_input_per_1m
+        market_out = model.market_output_per_1m
         detail = (
-            f" input=${model.input_per_1m:.4f}/1M output=${model.output_per_1m:.4f}/1M"
+            f" market=${market_in:.6f}/1M in, ${market_out:.6f}/1M out"
+            if market_in is not None and market_out is not None
+            else f" price_class={model.price_class}"
+        )
+        detail += (
+            f" (list=${model.list_input_per_1m:.4f}/${model.list_output_per_1m:.4f} per 1M)"
         )
     return JSONResponse(
         status_code=403,
@@ -170,6 +217,11 @@ def listening_on(request: Request, cfg: AppConfig) -> tuple[str, int]:
     if isinstance(server, tuple) and len(server) == 2 and server[1]:
         return str(server[0]), int(server[1])
     return cfg.server.host, cfg.server.port
+
+
+def _none_last(value: float | None) -> float:
+    """Sort key that pushes models with no price to the end of the list."""
+    return float("inf") if value is None else float(value)
 
 
 @contextlib.asynccontextmanager
@@ -248,7 +300,7 @@ async def root() -> JSONResponse:
 
 @app.get("/admin/api/status")
 async def admin_status(request: Request) -> JSONResponse:
-    cfg = state.cfg
+    cfg = maybe_reload_config()
     filters = cfg.filters
     total = len(state.catalog.models)
     passing = [m for m in state.catalog.models.values() if not evaluate(m, filters)]
@@ -267,7 +319,7 @@ async def admin_status(request: Request) -> JSONResponse:
                 "total": total,
                 "passing": len(passing),
                 "filtered_out": total - len(passing),
-                **state.catalog.priced_summary(),
+                **{f"class_{k}": v for k, v in state.catalog.class_summary().items()},
             },
             "minimum_discount_prefix": minimum_discount_path_prefix(filters),
         }
@@ -282,7 +334,7 @@ async def admin_models(
     sort: str = "output",
 ) -> JSONResponse:
     """Annotated catalog for the admin table: price per 1M + pass/fail reasons."""
-    filters = state.cfg.filters
+    filters = maybe_reload_config().filters
     needle = q.strip().lower()
     rows = []
     for model in state.catalog.models.values():
@@ -294,13 +346,15 @@ async def admin_models(
         rows.append(model.to_admin_row(failed))
 
     sort_keys = {
-        "output": lambda r: (r["output_per_1m"], r["input_per_1m"], r["id"]),
-        "input": lambda r: (r["input_per_1m"], r["output_per_1m"], r["id"]),
+        "output": lambda r: (_none_last(r["market_output_per_1m"]), r["id"]),
+        "input": lambda r: (_none_last(r["market_input_per_1m"]), r["id"]),
+        "list_output": lambda r: (r["list_output_per_1m"], r["id"]),
         "name": lambda r: r["id"].lower(),
         "discount": lambda r: (
             -(r["estimated_discount_pct"] if r["estimated_discount_pct"] is not None else -1e9)
         ),
         "context": lambda r: -r["context_length"],
+        "sellers": lambda r: -r["healthy_seller_count"],
     }
     rows.sort(key=sort_keys.get(sort, sort_keys["output"]))
     return JSONResponse(
@@ -314,6 +368,7 @@ async def admin_models(
 
 @app.post("/admin/api/refresh")
 async def admin_refresh() -> JSONResponse:
+    maybe_reload_config()
     ok = await state.catalog.refresh(state.client)
     return JSONResponse(
         {
@@ -432,11 +487,13 @@ async def admin_set_config(request: Request, payload: dict[str, Any]) -> JSONRes
 
 @app.get("/v1/models")
 async def list_models() -> JSONResponse:
+    maybe_reload_config()
     return JSONResponse({"object": "list", "data": filtered_models()})
 
 
 @app.get("/v1/models/{model_id}")
 async def retrieve_model(model_id: str) -> JSONResponse:
+    maybe_reload_config()
     model = state.catalog.models.get(model_id)
     if model is None:
         return JSONResponse(
@@ -459,6 +516,7 @@ async def proxy_v1(sub_path: str, request: Request):
     API key is configured - the router never leaks a key problem as the reason
     a filtered model was refused.
     """
+    maybe_reload_config()
     body: bytes = await request.body()
     model_id: str | None = None
     if body:

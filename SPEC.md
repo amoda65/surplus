@@ -28,30 +28,63 @@ is served by the same app at `/admin`.
 | UI language | English (matches the English-only code rule) |
 | filters | every filter type has its own enable toggle; values apply only while enabled |
 | price freshness | background refresh on TTL + refresh at startup + manual **Refresh now** button |
-| price cap unit | per 1M tokens |
-| zero-priced models | pass (0 is below any cap) |
-| discount filter | delegated upstream via `/min{N}/v1/...` path rewrite |
+| price cap unit | USD per 1M tokens |
+| price source for caps | the **actual marketplace offer** (`/api/marketplace`), not the list price |
+| cap boundary | inclusive ("at most"): a price exactly at the cap passes |
+| models with no live offer | rejected fail-closed (`no_market_offer`) |
+| models priced per media unit (image/video/audio jobs) | rejected fail-closed (`not_token_priced`) |
+| discount filter | upstream `/min{N}/v1/...` rewrite + local check on `best_live_discount_pct` |
 | unknown model | reject (fail-closed) unless `allow_unknown_models = true` |
 
 ## Upstream API facts (verified 2026-11-09, live probes)
 
 | endpoint | auth | shape |
 |---|---|---|
-| `GET /v1/models` | none | `{data: [{id, name, provider, context_length, architecture:{input_modalities, output_modalities}, pricing:{prompt, completion, input_cache_read, input_cache_write}, supported_features}]}` — 524 models; pricing is **per token as decimal strings** |
-| `GET /v1/prices` | none | `{models: [{model, displayName, modelProvider, providers: [{provider, providerName, pricing:{input, output, cacheRead}}]}], providers: [...], updated_at}` — pricing **per 1M tokens**; reference list prices for discount math |
+| `GET /v1/models` | none | `{data: [{id, name, provider, context_length, architecture:{input_modalities, output_modalities}, pricing:{prompt, completion, input_cache_read, input_cache_write}, supported_features}]}` — 524 models; pricing is the **list price** in per-token decimal strings (docs: "multiply by 1M for $/1M tokens rate") |
+| `GET /v1/prices` | none | `{models: [{model, displayName, modelProvider, providers: [{provider, providerName, pricing:{input, output, cacheRead}}]}], providers: [...], updated_at}` — provider reference prices, **USD per 1M tokens** |
+| `GET /api/marketplace` | none | `{data: {markets: [{model, best_input_per_1m, best_output_per_1m, best_media_unit_price, media_unit, direct_input_per_1m, direct_output_per_1m, best_live_discount_pct, best_discount_pct, healthy_seller_count, num_sellers, ...}], computed_at, ...}}` — **the actual best live offer, in microdollars per 1M tokens** |
 | `POST /v1/chat/completions` | Bearer key | OpenAI-compatible, SSE streaming |
 | `/anthropic/*` | Bearer key | Anthropic Messages skin (Claude Code, Anthropic SDK) |
 | `/min{N}/v1/...` | Bearer key | upstream minimum-discount routing; N integer 0..100, no leading zeros or decimals |
 
-Snapshot at probe time: 293 of 524 models priced 0.00; priced range input ≤
-$30/1M, output ≤ $180/1M; 18 reference providers.
+Snapshot at probe time (2026-11-09): 524 catalog models, 480 with live market
+offers — 254 token-priced, ~180 priced per media unit (image/job/minute/1K chars),
+~46 listed with sellers but no parseable price — and 44 catalog models with no
+offer at all. Marketplace prices run ~1000x below list: median $0.0006/1M input,
+$0.0015/1M output; p95 $0.86 / $3.35.
 
-## Filter types (each individually toggleable in the UI)
+**Price semantics — the single most important rule in this project.** Three
+different numbers exist for one model, and only one of them is what the owner
+pays:
+
+| number | source | unit | example (`qwen3.8-max-0902`) |
+|---|---|---|---|
+| list / direct price | `/v1/models` `pricing.prompt` | per-token decimal string | `"0.0000020000"` → $2.0/1M |
+| provider reference | `/v1/prices` `pricing.input` | USD per 1M | $2.0/1M |
+| **actual best offer** | `/api/marketplace` `best_input_per_1m` | **microdollars per 1M** | `2163` → **$0.002163/1M** |
+
+Caps are applied to the third row. Filtering on the list price silently passes
+almost everything, because marketplace discounts are commonly 95-99.9%.
+Cross-check used to confirm the microdollar unit: `direct_input_per_1m / 1e6`
+equals `/v1/models prompt * 1e6` for 479 of 480 models (the exception is a media
+model priced per unit).
+
+## Filter rules
+
+Always enforced (no toggle — owner chose fail-closed):
+
+| id | rule |
+|---|---|
+| `no_market_offer` | model has no entry in `/api/marketplace` → cannot be routed |
+| `not_token_priced` | model is priced per media unit, or has no price at all → token caps are meaningless |
+| `unknown_model` | id absent from the catalog (unless `allow_unknown_models = true`) |
+
+Toggleable:
 
 | id | filter | config keys |
 |---|---|---|
-| `price_input` | input price cap ("at most"), per 1M | `max_input_per_1m` |
-| `price_output` | output price cap ("at most"), per 1M | `max_output_per_1m` |
+| `price_input` | **market** input price cap, USD per 1M | `max_input_per_1m` |
+| `price_output` | **market** output price cap, USD per 1M | `max_output_per_1m` |
 | `discount` | minimum discount % below list price | `min_discount_pct` |
 | `models_allow` | allow list of model ids | `allow_models` |
 | `models_deny` | deny list of model ids (wins over allow) | `deny_models` |
@@ -59,20 +92,20 @@ $30/1M, output ≤ $180/1M; 18 reference providers.
 | `context_min` | minimum context length | `min_context_length` |
 
 Rules:
-- Price caps are **inclusive maxima**: `price_per_token * 1e6 <= cap` passes, with a
-  1e-9 tolerance because per-token decimal strings multiplied by 1e6 can land a hair
-  off the intended value (`0.00000057 * 1e6 == 0.5700000000000001`). Price 0 passes.
-- A disabled filter contributes no constraint.
-- `discount` maps to the upstream `/min{N}` rewrite; when `/v1/prices` carries a
-  reference price for the model, the catalog view also shows the estimated
-  discount so the UI can flag models that would fail upstream.
+- Caps are **inclusive maxima** on the marketplace price:
+  `best_*_per_1m / 1e6 <= cap` passes, with a 1e-9 tolerance.
+- A disabled filter contributes no constraint; the always-on rules still apply.
+- `discount` prefers upstream's `best_live_discount_pct`; when that is absent it
+  is computed from the list price (catalog, else `/v1/prices` reference) versus
+  the market price. An unprovable discount fails a floor > 0, mirroring upstream.
+  The floor is additionally enforced upstream by rewriting the path to `/min{N}`.
 - Enforcement points:
   - `GET /v1/models` (OpenAI + Anthropic model list) returns **only passing models**.
   - Every completion/messages request: extract `model` from the body, run the gate,
     and reject locally with `403`
     `{"error":{"message":...,"type":"model_filtered_out","model":...,"failed_filters":[...]}}`
-    **before** any upstream call. `failed_filters` names each filter that rejected.
-  - Models absent from the catalog: reject unless `allow_unknown_models = true`.
+    **before** any upstream call. The message carries the market and list prices
+    that caused the rejection.
 
 ## Price freshness (owner requirement)
 
@@ -132,9 +165,9 @@ api_key_env = SURPLUS_API_KEY
 
 [filter]
 enable_price_input = true
-max_input_per_1m = 2.0
+max_input_per_1m = 0.1
 enable_price_output = true
-max_output_per_1m = 10.0
+max_output_per_1m = 0.5
 enable_discount = false
 min_discount_pct = 30
 enable_models_allow = false

@@ -39,9 +39,9 @@ def write_test_config() -> None:
         "open_browser = false\n"
         "[filter]\n"
         "enable_price_input = true\n"
-        "max_input_per_1m = 2.0\n"
+        "max_input_per_1m = 0.1\n"
         "enable_price_output = true\n"
-        "max_output_per_1m = 10.0\n",
+        "max_output_per_1m = 0.5\n",
         encoding="utf-8",
     )
 
@@ -114,7 +114,8 @@ def main() -> int:
             ok,
             "admin_status",
             f"total={counts.get('total')} passing={counts.get('passing')} "
-            f"filtered={counts.get('filtered_out')} zero_priced={counts.get('zero_priced')} "
+            f"filtered={counts.get('filtered_out')} token_priced={counts.get('class_token')} "
+            f"no_offer={counts.get('class_no_offer')} "
             f"stale={body.get('catalog', {}).get('stale') if ok else '?'}",
         )
         if not ok:
@@ -139,33 +140,60 @@ def main() -> int:
         if not ok:
             return report()
 
-        # every returned model must respect the enabled caps
+        # every served model must respect the caps on its ACTUAL market price
+        status, admin_body = request("GET", "/admin/api/models?limit=1000")
+        rows = admin_body.get("models", []) if isinstance(admin_body, dict) else []
+        by_id = {r["id"]: r for r in rows}
         violations = []
         for entry in data:
-            pricing = entry.get("pricing") or {}
-            try:
-                i = float(pricing.get("prompt") or 0) * 1e6
-                o = float(pricing.get("completion") or 0) * 1e6
-            except (TypeError, ValueError):
+            row = by_id.get(entry.get("id"))
+            if row is None:
+                violations.append((entry.get("id"), "absent from admin rows"))
                 continue
-            # caps are inclusive maxima, with a tolerance for float conversion noise
-            if i > cap_in + 1e-9 or o > cap_out + 1e-9:
-                violations.append((entry.get("id"), i, o))
+            if row.get("price_class") != "token":
+                violations.append((entry.get("id"), f"class={row.get('price_class')}"))
+                continue
+            market_in = row.get("market_input_per_1m")
+            market_out = row.get("market_output_per_1m")
+            if (
+                market_in is None
+                or market_out is None
+                or market_in > cap_in + 1e-9
+                or market_out > cap_out + 1e-9
+            ):
+                violations.append((entry.get("id"), market_in, market_out))
         record(
             not violations,
-            "models_respect_price_caps",
-            f"caps input<={cap_in} output<={cap_out}; violations={len(violations)}"
-            + (f" e.g. {violations[:3]}" if violations else ""),
+            "served_models_respect_market_price_caps",
+            f"caps input<={cap_in} output<={cap_out} on market prices; "
+            f"violations={len(violations)}" + (f" e.g. {violations[:3]}" if violations else ""),
         )
 
         passing_id = data[0]["id"] if data else None
         record(bool(passing_id), "have_passing_model", str(passing_id))
 
-        # 3. find a model that fails the caps (for the rejection test)
-        status, body = request("GET", "/admin/api/models")
-        rows = body.get("models", []) if isinstance(body, dict) else []
-        failing = next((r for r in rows if r.get("failed_filters")), None)
-        record(bool(failing), "found_filtered_out_model", str(failing and failing.get("id")))
+        # 3. locate models rejected by each rule family (for the rejection tests)
+        failing = next((r for r in rows if "price_input" in (r.get("failed_filters") or [])), None)
+        no_offer = next(
+            (r for r in rows if "no_market_offer" in (r.get("failed_filters") or [])), None
+        )
+        not_token = next(
+            (r for r in rows if "not_token_priced" in (r.get("failed_filters") or [])), None
+        )
+        record(
+            bool(failing),
+            "found_price_filtered_model",
+            f"{failing and failing['id']} market_in={failing and failing['market_input_per_1m']}",
+        )
+        record(bool(no_offer), "found_model_without_offer", str(no_offer and no_offer["id"]))
+        record(bool(not_token), "found_non_token_priced_model", str(not_token and not_token["id"]))
+
+        # a cheap, high-discount model must survive the default caps
+        record(
+            "qwen3.8-max-0902" in {m["id"] for m in data},
+            "cheap_high_discount_model_served",
+            "qwen3.8-max-0902 (market $0.0022/$0.0065 per 1M) present in /v1/models",
+        )
 
         # 4. per-model retrieval
         if passing_id:
@@ -189,6 +217,24 @@ def main() -> int:
                 "reject_capped_model",
                 f"http {status} failed_filters={err.get('failed_filters')}",
             )
+
+        # 5b. models that cannot be routed are rejected fail-closed
+        for label, row, expected in (
+            ("no_offer", no_offer, "no_market_offer"),
+            ("not_token_priced", not_token, "not_token_priced"),
+        ):
+            if row:
+                status, body = request(
+                    "POST",
+                    "/v1/chat/completions",
+                    {"model": row["id"], "messages": [{"role": "user", "content": "hi"}]},
+                )
+                err = body.get("error", {}) if isinstance(body, dict) else {}
+                record(
+                    status == 403 and expected in (err.get("failed_filters") or []),
+                    f"reject_{label}",
+                    f"http {status} model={row['id']} failed_filters={err.get('failed_filters')}",
+                )
 
         # 6. unknown model fails closed
         status, body = request(

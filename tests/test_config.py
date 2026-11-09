@@ -29,8 +29,8 @@ def test_defaults_when_file_missing(tmp_path: Path) -> None:
     assert cfg.upstream.base_url == "https://api.surplusintelligence.ai"
     assert cfg.upstream.catalog_ttl_seconds == 300
     assert cfg.filters.enable_price_input is True
-    assert cfg.filters.max_input_per_1m == pytest.approx(2.0)
-    assert cfg.filters.max_output_per_1m == pytest.approx(10.0)
+    assert cfg.filters.max_input_per_1m == pytest.approx(0.1)
+    assert cfg.filters.max_output_per_1m == pytest.approx(0.5)
     assert cfg.filters.allow_unknown_models is False
 
 
@@ -80,7 +80,7 @@ def test_partial_file_falls_back_to_defaults(tmp_path: Path) -> None:
     cfg = load_config(path)
     assert cfg.server.port == 8123
     assert cfg.server.host == "127.0.0.1"  # default kept
-    assert cfg.filters.max_output_per_1m == pytest.approx(10.0)
+    assert cfg.filters.max_output_per_1m == pytest.approx(0.5)
 
 
 def test_invalid_values_are_tolerated(tmp_path: Path) -> None:
@@ -95,7 +95,7 @@ def test_invalid_values_are_tolerated(tmp_path: Path) -> None:
     assert cfg.server.port == 8404  # fallback
     assert cfg.upstream.catalog_ttl_seconds == 5  # clamped to the minimum
     assert cfg.upstream.request_timeout_seconds == 5.0  # clamped to the minimum
-    assert cfg.filters.max_input_per_1m == pytest.approx(2.0)  # fallback
+    assert cfg.filters.max_input_per_1m == pytest.approx(0.1)  # fallback
     assert cfg.filters.enable_price_input is True  # unparseable bool -> default
 
 

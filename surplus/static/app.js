@@ -7,7 +7,7 @@ const FILTERS = [
   {
     id: "price_input",
     label: "Input price cap",
-    desc: "Reject models whose input price is above this cap (per 1M tokens). Exactly at the cap passes.",
+    desc: "Reject models whose ACTUAL marketplace input price is above this cap ($ per 1M tokens). At the cap passes.",
     toggle: "enable_price_input",
     fields: [
       { key: "max_input_per_1m", label: "Max $ per 1M input", type: "number", step: "0.01", min: "0" },
@@ -16,7 +16,7 @@ const FILTERS = [
   {
     id: "price_output",
     label: "Output price cap",
-    desc: "Reject models whose output price is above this cap (per 1M tokens). Exactly at the cap passes.",
+    desc: "Reject models whose ACTUAL marketplace output price is above this cap ($ per 1M tokens). At the cap passes.",
     toggle: "enable_price_output",
     fields: [
       { key: "max_output_per_1m", label: "Max $ per 1M output", type: "number", step: "0.01", min: "0" },
@@ -108,10 +108,12 @@ function banner(message, kind) {
 
 function money(value) {
   if (value === null || value === undefined) return "—";
-  if (value === 0) return "free";
+  if (value === 0) return "0";
+  // Marketplace prices are often fractions of a cent per 1M tokens.
+  if (value < 0.001) return Number(value.toFixed(6)).toString();
+  if (value < 1) return Number(value.toFixed(4)).toString();
   if (value >= 100) return value.toFixed(0);
-  if (value >= 1) return value.toFixed(2);
-  return Number(value.toFixed(4)).toString();
+  return value.toFixed(2);
 }
 
 function uptime(seconds) {
@@ -166,6 +168,10 @@ function renderStatus(status) {
   const rows = [
     ["Last refresh", cat.last_fetch_iso || "never"],
     ["Age", cat.age_seconds === null || cat.age_seconds === undefined ? "—" : `${Math.round(cat.age_seconds)}s`],
+    ["Live market offers", cat.market_offer_count ?? "—"],
+    ["Market computed", cat.market_age_seconds === null || cat.market_age_seconds === undefined
+      ? "—"
+      : `${Math.round(cat.market_age_seconds)}s ago`],
     ["Upstream updated_at", cat.upstream_updated_at || "—"],
     ["Refreshes since start", cat.refresh_count ?? 0],
     ["TTL", `${status.config?.upstream?.catalog_ttl_seconds ?? "?"}s`],
@@ -179,7 +185,9 @@ function renderStatus(status) {
     ["Total models", c.total],
     ["Passing", c.passing],
     ["Filtered out", c.filtered_out],
-    ["Zero priced", c.zero_priced],
+    ["Token priced", c.class_token],
+    ["Media/unit priced", c.class_media_unit],
+    ["No live offer", c.class_no_offer],
   ];
   $("#counts").innerHTML = counts
     .map(([label, value]) => `<div class="count"><b>${value ?? "—"}</b><span>${label}</span></div>`)
@@ -349,13 +357,22 @@ async function loadModels() {
         const discount =
           m.estimated_discount_pct === null || m.estimated_discount_pct === undefined
             ? "—"
-            : `${m.estimated_discount_pct.toFixed(0)}%`;
+            : `${m.estimated_discount_pct.toFixed(1)}%`;
+        const priceNote =
+          m.price_class === "media_unit"
+            ? `<span class="reasons">${escapeHtml(m.media_unit || "unit")}: ${money(m.media_unit_price_usd)}</span>`
+            : m.price_class === "token"
+              ? ""
+              : `<span class="reasons">${escapeHtml(m.price_class)}</span>`;
         return `<tr>
           <td><strong>${escapeHtml(m.id)}</strong><br><span class="reasons">${escapeHtml(m.name)}</span></td>
           <td>${escapeHtml(m.provider || "—")}</td>
-          <td class="num">${money(m.input_per_1m)}</td>
-          <td class="num">${money(m.output_per_1m)}</td>
+          <td class="num">${money(m.market_input_per_1m)}</td>
+          <td class="num">${money(m.market_output_per_1m)} ${priceNote}</td>
+          <td class="num muted">${money(m.list_input_per_1m)}</td>
+          <td class="num muted">${money(m.list_output_per_1m)}</td>
           <td class="num">${discount}</td>
+          <td class="num">${m.healthy_seller_count || 0}</td>
           <td class="num">${m.context_length ? m.context_length.toLocaleString() : "—"}</td>
           <td>${status}</td>
         </tr>`;

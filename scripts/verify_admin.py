@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -134,9 +135,9 @@ def main() -> int:
         payload = {
             "filter": {
                 "enable_price_input": True,
-                "max_input_per_1m": 0.5,
+                "max_input_per_1m": 0.001,
                 "enable_price_output": True,
-                "max_output_per_1m": 2.5,
+                "max_output_per_1m": 0.005,
                 "enable_models_deny": True,
                 "deny_models": ["minimax-m2.1"],
                 "enable_discount": False,
@@ -268,6 +269,33 @@ def main() -> int:
         status, res = request("POST", "/admin/api/config", {"server": {"port": "nope"}})
         record(status == 400, "invalid_port_rejected", f"http {status}")
 
+        # ---- editing config.ini on disk applies without a restart ----------
+        status, before = request("GET", "/admin/api/status")
+        before_passing = before.get("counts", {}).get("passing")
+        text = CONFIG.read_text(encoding="utf-8")
+        if "max_input_per_1m" in text:
+            text = re.sub(r"max_input_per_1m = .*", "max_input_per_1m = 0.0005", text)
+        else:
+            text += "\n[filter]\nmax_input_per_1m = 0.0005\n"
+        CONFIG.write_text(text, encoding="utf-8")
+        future = time.time() + 10  # guarantee the mtime visibly moved
+        os.utime(CONFIG, (future, future))
+
+        status, after = request("GET", "/admin/api/status")
+        after_caps = after.get("config", {}).get("filter", {}).get("max_input_per_1m")
+        after_passing = after.get("counts", {}).get("passing")
+        record(
+            after_caps == 0.0005 and after_passing < before_passing,
+            "disk_edit_applies_without_restart",
+            f"cap {before.get('config', {}).get('filter', {}).get('max_input_per_1m')} -> "
+            f"{after_caps}; passing {before_passing} -> {after_passing}",
+        )
+        request(
+            "POST",
+            "/admin/api/config",
+            {"filter": {"max_input_per_1m": 0.1, "max_output_per_1m": 0.5}},
+        )
+
         # ---- browser auto-open toggle -------------------------------------
         status, res = request("POST", "/admin/api/config", {"server": {"open_browser": False}})
         record(
@@ -286,10 +314,19 @@ def main() -> int:
             f"q=gpt count={body.get('count')} returned={body.get('returned')}",
         )
 
-        status, body = request("GET", "/admin/api/models?sort=input&limit=50")
+        status, body = request("GET", "/admin/api/models?sort=input&limit=600")
         rows = body.get("models", []) if isinstance(body, dict) else []
-        inputs = [r["input_per_1m"] for r in rows]
-        record(rows and inputs == sorted(inputs), "models_sorted_by_input", f"{len(rows)} rows")
+        priced = [
+            r["market_input_per_1m"] for r in rows if r.get("market_input_per_1m") is not None
+        ]
+        unpriced_tail = all(
+            r.get("market_input_per_1m") is None for r in rows[len(priced):]
+        )
+        record(
+            bool(rows) and priced == sorted(priced) and unpriced_tail,
+            "models_sorted_by_market_input",
+            f"{len(rows)} rows, {len(priced)} priced, unpriced pushed last={unpriced_tail}",
+        )
 
         status, body = request("GET", "/admin/api/models?passed_only=true")
         rows = body.get("models", []) if isinstance(body, dict) else []
