@@ -11,8 +11,10 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -22,6 +24,26 @@ ROOT = Path(__file__).resolve().parent.parent
 PORT = int(os.environ.get("VERIFY_PORT", "8499"))
 BASE = f"http://127.0.0.1:{PORT}"
 RESULTS: list[tuple[bool, str, str]] = []
+
+# Hermetic config: the router is pointed at a throwaway file via SURPLUS_CONFIG so
+# the checks never read or write the owner's real config.ini.
+CONFIG_DIR = Path(tempfile.mkdtemp(prefix="surplus-verify-"))
+CONFIG = CONFIG_DIR / "config.ini"
+
+
+def write_test_config() -> None:
+    CONFIG.write_text(
+        "[server]\n"
+        "host = 127.0.0.1\n"
+        f"port = {PORT}\n"
+        "open_browser = false\n"
+        "[filter]\n"
+        "enable_price_input = true\n"
+        "max_input_per_1m = 2.0\n"
+        "enable_price_output = true\n"
+        "max_output_per_1m = 10.0\n",
+        encoding="utf-8",
+    )
 
 
 def record(ok: bool, name: str, detail: str = "") -> None:
@@ -64,14 +86,18 @@ def wait_for_server(proc: subprocess.Popen, timeout: float = 60.0) -> bool:
 
 
 def main() -> int:
-    env = {**os.environ, "SURPLUS_VERIFY_PORT": str(PORT)}
+    write_test_config()
+    # Strip the owner's key so the missing-credential path is deterministic and
+    # no check can ever place a real (billed) upstream request.
+    env = {k: v for k, v in os.environ.items() if k != "SURPLUS_API_KEY"}
+    env["SURPLUS_CONFIG"] = str(CONFIG)
     cmd = [
         sys.executable,
         "-c",
         "import uvicorn; from surplus.main import app;"
         f" uvicorn.run(app, host='127.0.0.1', port={PORT}, log_level='warning', access_log=False)",
     ]
-    print(f"starting router on {BASE} ...")
+    print(f"starting router on {BASE} (config: {CONFIG}) ...")
     proc = subprocess.Popen(cmd, cwd=str(ROOT), env=env)
     try:
         if not wait_for_server(proc):
@@ -122,12 +148,13 @@ def main() -> int:
                 o = float(pricing.get("completion") or 0) * 1e6
             except (TypeError, ValueError):
                 continue
-            if i >= cap_in or o >= cap_out:
+            # caps are inclusive maxima, with a tolerance for float conversion noise
+            if i > cap_in + 1e-9 or o > cap_out + 1e-9:
                 violations.append((entry.get("id"), i, o))
         record(
             not violations,
             "models_respect_price_caps",
-            f"caps input<{cap_in} output<{cap_out}; violations={len(violations)}"
+            f"caps input<={cap_in} output<={cap_out}; violations={len(violations)}"
             + (f" e.g. {violations[:3]}" if violations else ""),
         )
 
@@ -222,6 +249,7 @@ def main() -> int:
             proc.wait(timeout=10)
         except subprocess.TimeoutExpired:
             proc.kill()
+        shutil.rmtree(CONFIG_DIR, ignore_errors=True)
 
 
 def report() -> int:

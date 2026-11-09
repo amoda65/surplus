@@ -155,15 +155,16 @@ Every filter is independently switchable; values apply only while enabled.
 
 | filter | keys | rule |
 |---|---|---|
-| input price cap | `enable_price_input`, `max_input_per_1m` | `price_per_1m < cap` |
-| output price cap | `enable_price_output`, `max_output_per_1m` | `price_per_1m < cap` |
+| input price cap | `enable_price_input`, `max_input_per_1m` | `price_per_1m <= cap` (inclusive) |
+| output price cap | `enable_price_output`, `max_output_per_1m` | `price_per_1m <= cap` (inclusive) |
 | min discount | `enable_discount`, `min_discount_pct` | rewrites upstream path to `/min{N}/v1/...` |
 | allow models | `enable_models_allow`, `allow_models` | id must be listed |
 | deny models | `enable_models_deny`, `deny_models` | wins over allow |
 | allow providers | `enable_providers_allow`, `allow_providers` | provider must be listed |
 | min context | `enable_context_min`, `min_context_length` | `context_length >= min` |
 
-Zero-priced models pass. A model missing from the catalog is rejected
+Zero-priced models pass. Caps are inclusive ("at most"): a model priced exactly
+at the cap passes. A model missing from the catalog is rejected
 (fail-closed) unless `allow_unknown_models = true`. A rejected request returns
 `403` with `failed_filters` naming every filter that refused it, and never
 reaches upstream.

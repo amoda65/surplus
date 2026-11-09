@@ -23,6 +23,12 @@ FILTER_IDS = (
 
 UNKNOWN_MODEL = "unknown_model"
 
+# Prices arrive as per-token decimal strings and are multiplied by 1e6, which
+# can land a hair off the intended value (0.00000057 * 1e6 == 0.5700000000000001,
+# 0.0000021 * 1e6 == 2.0999999999999996). Caps are inclusive maxima, so compare
+# with this tolerance to keep a price that is exactly at the cap passing.
+CAP_EPSILON = 1e-9
+
 
 def _per_token_to_per_1m(value: object) -> float:
     """Upstream pricing is a per-token decimal string; convert to per-1M tokens."""
@@ -113,11 +119,15 @@ def evaluate(model: ModelInfo, filters: FilterConfig) -> list[str]:
         if model.provider.strip().lower() not in allowed:
             failed.append("providers_allow")
 
-    # Price caps: strictly below the cap passes. A price of 0 always passes.
-    if filters.enable_price_input and model.input_per_1m >= filters.max_input_per_1m:
+    # Price caps are inclusive maxima ("at most"): a price equal to the cap
+    # passes, matching the max_* config names. A price of 0 always passes.
+    if filters.enable_price_input and model.input_per_1m > filters.max_input_per_1m + CAP_EPSILON:
         failed.append("price_input")
 
-    if filters.enable_price_output and model.output_per_1m >= filters.max_output_per_1m:
+    if (
+        filters.enable_price_output
+        and model.output_per_1m > filters.max_output_per_1m + CAP_EPSILON
+    ):
         failed.append("price_output")
 
     if filters.enable_discount:

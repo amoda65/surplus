@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -19,10 +21,14 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-CONFIG = ROOT / "config.ini"
 PORT = int(os.environ.get("VERIFY_PORT", "8498"))
 BASE = f"http://127.0.0.1:{PORT}"
 RESULTS: list[tuple[bool, str, str]] = []
+
+# Hermetic config via SURPLUS_CONFIG: the owner's real config.ini is never read
+# or written by these checks.
+CONFIG_DIR = Path(tempfile.mkdtemp(prefix="surplus-verify-admin-"))
+CONFIG = CONFIG_DIR / "config.ini"
 
 
 def record(ok: bool, name: str, detail: str = "") -> None:
@@ -69,19 +75,19 @@ def wait_for_server(proc: subprocess.Popen, timeout: float = 90.0) -> bool:
 
 
 def main() -> int:
-    backup = CONFIG.read_bytes() if CONFIG.exists() else None
     # Mimic a real deployment: the process starts from config.ini, so the file
     # must name the port the test server actually binds.
     CONFIG.write_text(f"[server]\nhost = 127.0.0.1\nport = {PORT}\n", encoding="utf-8")
 
     env = {k: v for k, v in os.environ.items() if k != "SURPLUS_API_KEY"}
+    env["SURPLUS_CONFIG"] = str(CONFIG)
     cmd = [
         sys.executable,
         "-c",
         "import uvicorn; from surplus.main import app;"
         f" uvicorn.run(app, host='127.0.0.1', port={PORT}, log_level='warning', access_log=False)",
     ]
-    print(f"starting router on {BASE} ...")
+    print(f"starting router on {BASE} (config: {CONFIG}) ...")
     proc = subprocess.Popen(cmd, cwd=str(ROOT), env=env)
     try:
         if not wait_for_server(proc):
@@ -324,11 +330,8 @@ def main() -> int:
             proc.wait(timeout=10)
         except subprocess.TimeoutExpired:
             proc.kill()
-        if backup is None:
-            CONFIG.unlink(missing_ok=True)
-        else:
-            CONFIG.write_bytes(backup)
-        print("config.ini restored to its pre-test state")
+        shutil.rmtree(CONFIG_DIR, ignore_errors=True)
+        print("temporary test config discarded")
 
 
 def report() -> int:

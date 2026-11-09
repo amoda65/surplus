@@ -7,7 +7,7 @@ const FILTERS = [
   {
     id: "price_input",
     label: "Input price cap",
-    desc: "Reject models whose input price reaches this cap (per 1M tokens).",
+    desc: "Reject models whose input price is above this cap (per 1M tokens). Exactly at the cap passes.",
     toggle: "enable_price_input",
     fields: [
       { key: "max_input_per_1m", label: "Max $ per 1M input", type: "number", step: "0.01", min: "0" },
@@ -16,7 +16,7 @@ const FILTERS = [
   {
     id: "price_output",
     label: "Output price cap",
-    desc: "Reject models whose output price reaches this cap (per 1M tokens).",
+    desc: "Reject models whose output price is above this cap (per 1M tokens). Exactly at the cap passes.",
     toggle: "enable_price_output",
     fields: [
       { key: "max_output_per_1m", label: "Max $ per 1M output", type: "number", step: "0.01", min: "0" },

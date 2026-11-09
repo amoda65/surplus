@@ -50,8 +50,8 @@ $30/1M, output ≤ $180/1M; 18 reference providers.
 
 | id | filter | config keys |
 |---|---|---|
-| `price_input` | input price cap, per 1M | `max_input_per_1m` |
-| `price_output` | output price cap, per 1M | `max_output_per_1m` |
+| `price_input` | input price cap ("at most"), per 1M | `max_input_per_1m` |
+| `price_output` | output price cap ("at most"), per 1M | `max_output_per_1m` |
 | `discount` | minimum discount % below list price | `min_discount_pct` |
 | `models_allow` | allow list of model ids | `allow_models` |
 | `models_deny` | deny list of model ids (wins over allow) | `deny_models` |
@@ -59,7 +59,9 @@ $30/1M, output ≤ $180/1M; 18 reference providers.
 | `context_min` | minimum context length | `min_context_length` |
 
 Rules:
-- Price comparison: `price_per_token * 1e6 < cap` (strictly below); price 0 passes.
+- Price caps are **inclusive maxima**: `price_per_token * 1e6 <= cap` passes, with a
+  1e-9 tolerance because per-token decimal strings multiplied by 1e6 can land a hair
+  off the intended value (`0.00000057 * 1e6 == 0.5700000000000001`). Price 0 passes.
 - A disabled filter contributes no constraint.
 - `discount` maps to the upstream `/min{N}` rewrite; when `/v1/prices` carries a
   reference price for the model, the catalog view also shows the estimated

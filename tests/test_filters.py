@@ -70,12 +70,34 @@ def test_zero_priced_model_passes_any_cap(catalog: dict[str, ModelInfo]) -> None
     assert evaluate(catalog["minimax-m2.1"], filters) == []
 
 
-def test_cap_is_strict_not_inclusive(catalog: dict[str, ModelInfo]) -> None:
+def test_cap_is_inclusive_at_the_boundary(catalog: dict[str, ModelInfo]) -> None:
+    """`max_*` means "at most": a price exactly at the cap passes (owner decision)."""
     model = catalog["openai-gpt-oss-120b"]  # 0.07 in / 0.30 out per 1M
-    assert evaluate(model, FilterConfig(max_input_per_1m=0.07, max_output_per_1m=10.0)) == [
+    assert evaluate(model, FilterConfig(max_input_per_1m=0.07, max_output_per_1m=10.0)) == []
+    assert evaluate(model, FilterConfig(max_input_per_1m=10.0, max_output_per_1m=0.30)) == []
+    # a hair above the cap still fails
+    assert evaluate(model, FilterConfig(max_input_per_1m=0.0699, max_output_per_1m=10.0)) == [
         "price_input"
     ]
-    assert evaluate(model, FilterConfig(max_input_per_1m=0.0701, max_output_per_1m=10.0)) == []
+    assert evaluate(model, FilterConfig(max_input_per_1m=10.0, max_output_per_1m=0.2999)) == [
+        "price_output"
+    ]
+
+
+def test_cap_tolerance_absorbs_float_conversion_noise() -> None:
+    """0.00000057 * 1e6 == 0.5700000000000001, which must still pass a 0.57 cap."""
+    entry = {
+        "id": "float-noise-model",
+        "name": "Float noise",
+        "provider": "Test",
+        "context_length": 1000,
+        "pricing": {"prompt": "0.00000057", "completion": "0.0000021"},
+    }
+    model = ModelInfo.from_catalog_entry(entry)
+    # the raw float really is a hair above the decimal value the cap expresses
+    assert model.input_per_1m > 0.57
+    assert model.output_per_1m < 2.1  # 2.0999999999999996 - noise goes both ways
+    assert evaluate(model, FilterConfig(max_input_per_1m=0.57, max_output_per_1m=2.1)) == []
 
 
 def test_deny_wins_over_allow(catalog: dict[str, ModelInfo]) -> None:
