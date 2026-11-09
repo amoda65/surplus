@@ -351,6 +351,140 @@ def main() -> int:
             ),
         )
 
+        # ---- market source + quality fields --------------------------------
+        status, st = request("GET", "/admin/api/status")
+        cat = st.get("catalog", {}) if isinstance(st, dict) else {}
+        record(
+            cat.get("market_source") == "/api/markets" and cat.get("market_offer_count", 0) > 0,
+            "market_source_is_api_markets",
+            f"source={cat.get('market_source')} offers={cat.get('market_offer_count')}",
+        )
+
+        status, body = request("GET", "/admin/api/models?limit=600")
+        rows = body.get("models", []) if isinstance(body, dict) else []
+        with_uptime = [r for r in rows if r.get("uptime_pct") is not None]
+        with_ttft = [r for r in rows if r.get("ttft_p50_ms") is not None]
+        with_trend = [r for r in rows if r.get("trend_direction")]
+        record(
+            bool(with_uptime) and bool(with_ttft) and bool(with_trend),
+            "quality_fields_populated",
+            f"uptime={len(with_uptime)} ttft={len(with_ttft)} trend={len(with_trend)} "
+            f"of {len(rows)} rows",
+        )
+
+        # new sort keys honour dir=desc, unmeasured rows stay last
+        status, body = request("GET", "/admin/api/models?sort=uptime&dir=desc&limit=600")
+        rows = body.get("models", []) if isinstance(body, dict) else []
+        ups = [r["uptime_pct"] for r in rows if r.get("uptime_pct") is not None]
+        record(
+            bool(ups) and ups == sorted(ups, reverse=True),
+            "sort_uptime_desc",
+            f"{len(ups)} measured rows in descending order",
+        )
+
+        # price_class filter narrows to one class
+        status, body = request("GET", "/admin/api/models?price_class=token&limit=600")
+        rows = body.get("models", []) if isinstance(body, dict) else []
+        record(
+            bool(rows) and all(r["price_class"] == "token" for r in rows),
+            "price_class_filter",
+            f"{len(rows)} token-priced rows only",
+        )
+
+        # ---- per-model detail ------------------------------------------------
+        status, body = request("GET", "/admin/api/models?sort=requests&dir=desc&limit=1")
+        rows = body.get("models", []) if isinstance(body, dict) else []
+        if rows:
+            mid = rows[0]["id"]
+            status, detail = request("GET", f"/admin/api/models/{urllib.parse.quote(mid)}")
+            record(
+                status == 200
+                and isinstance(detail.get("providers"), list)
+                and "features" in detail
+                and "trend_direction" in detail,
+                "model_detail_endpoint",
+                f"{mid}: providers={len(detail.get('providers', []))} "
+                f"trusted_out={detail.get('trusted_output_per_1m')}",
+            )
+        else:
+            record(False, "model_detail_endpoint", "no rows to probe")
+
+        status, _ = request("GET", "/admin/api/models/does-not-exist")
+        record(status == 404, "model_detail_unknown_404", f"http {status}")
+
+        # ---- account endpoints degrade cleanly without a key -----------------
+        status, body = request("GET", "/admin/api/account")
+        record(
+            status == 200 and body.get("available") is False and body.get("reason") == "no_api_key",
+            "account_without_key",
+            f"available={body.get('available')} reason={body.get('reason')}",
+        )
+        status, body = request("GET", "/admin/api/account/requests?limit=5")
+        record(
+            status == 200 and body.get("available") is False and body.get("reason") == "no_api_key",
+            "account_requests_without_key",
+            f"available={body.get('available')} reason={body.get('reason')}",
+        )
+
+        # ---- new filter knobs round-trip through config ----------------------
+        status, res = request(
+            "POST",
+            "/admin/api/config",
+            {
+                "filter": {
+                    "enable_min_sellers": True,
+                    "min_healthy_sellers": 3,
+                    "enable_min_uncapped": True,
+                    "min_uncapped_offers": 1,
+                    "enable_require_features": True,
+                    "require_features": "streaming, tools",
+                }
+            },
+        )
+        f = res.get("config", {}).get("filter", {}) if isinstance(res, dict) else {}
+        new_counts = res.get("counts", {})
+        record(
+            status == 200
+            and f.get("enable_min_sellers") is True
+            and f.get("min_healthy_sellers") == 3
+            and f.get("require_features") == ["streaming", "tools"],
+            "quality_filters_round_trip",
+            f"passing={new_counts.get('passing')} (before {baseline.get('passing')})",
+        )
+        record(
+            new_counts.get("passing", 10**9) < baseline.get("passing", 0),
+            "quality_filters_reduce_passing",
+            f"{baseline.get('passing')} -> {new_counts.get('passing')}",
+        )
+
+        # the gate enforces the new rules on a request
+        status, body = request(
+            "GET", "/admin/api/models?passed_only=false&limit=600"
+        )
+        rows = body.get("models", []) if isinstance(body, dict) else []
+        new_reasons = {r for row in rows for r in row.get("failed_filters", [])} & {
+            "min_sellers",
+            "min_uncapped",
+            "require_features",
+        }
+        record(
+            bool(new_reasons),
+            "new_filter_reasons_visible",
+            f"reasons seen: {sorted(new_reasons)}",
+        )
+
+        request(
+            "POST",
+            "/admin/api/config",
+            {
+                "filter": {
+                    "enable_min_sellers": False,
+                    "enable_min_uncapped": False,
+                    "enable_require_features": False,
+                }
+            },
+        )
+
         # ---- manual refresh ------------------------------------------------
         status, res = request("POST", "/admin/api/refresh")
         record(

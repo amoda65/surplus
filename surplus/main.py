@@ -24,6 +24,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import __version__
+from .account import account_reader
 from .catalog import Catalog
 from .config import (
     AppConfig,
@@ -332,6 +333,9 @@ async def admin_models(
     passed_only: bool = False,
     limit: int = 1000,
     sort: str = "output",
+    dir: str = "asc",
+    price_class: str = "",
+    provider: str = "",
 ) -> JSONResponse:
     """Annotated catalog for the admin table: price per 1M + pass/fail reasons."""
     filters = maybe_reload_config().filters
@@ -340,23 +344,44 @@ async def admin_models(
     for model in state.catalog.models.values():
         if needle and needle not in model.id.lower() and needle not in model.name.lower():
             continue
+        if price_class and model.price_class != price_class:
+            continue
+        if provider and model.provider.lower() != provider.lower():
+            continue
         failed = evaluate(model, filters)
         if passed_only and failed:
             continue
         rows.append(model.to_admin_row(failed))
 
-    sort_keys = {
-        "output": lambda r: (_none_last(r["market_output_per_1m"]), r["id"]),
-        "input": lambda r: (_none_last(r["market_input_per_1m"]), r["id"]),
-        "list_output": lambda r: (r["list_output_per_1m"], r["id"]),
-        "name": lambda r: r["id"].lower(),
-        "discount": lambda r: (
-            -(r["estimated_discount_pct"] if r["estimated_discount_pct"] is not None else -1e9)
-        ),
-        "context": lambda r: -r["context_length"],
-        "sellers": lambda r: -r["healthy_seller_count"],
+    descending = dir == "desc"
+    numeric_keys = {
+        "output": "market_output_per_1m",
+        "input": "market_input_per_1m",
+        "list_output": "list_output_per_1m",
+        "discount": "estimated_discount_pct",
+        "context": "context_length",
+        "sellers": "healthy_seller_count",
+        "uncapped": "uncapped_offer_count",
+        "uptime": "uptime_pct",
+        "ttft": "ttft_p50_ms",
+        "tps": "tps_p50",
+        "requests": "requests_24h",
+        "liquidity": "liquidity_usd",
+        "cache_write": "cache_write_per_1m",
+        "trusted_output": "trusted_output_per_1m",
     }
-    rows.sort(key=sort_keys.get(sort, sort_keys["output"]))
+    if sort == "name":
+        rows.sort(key=lambda r: r["id"].lower(), reverse=descending)
+    elif sort in numeric_keys:
+        field = numeric_keys[sort]
+        # Missing measurements sort last in both directions.
+        missing = float("-inf") if descending else float("inf")
+        rows.sort(
+            key=lambda r: (r.get(field) if r.get(field) is not None else missing, r["id"]),
+            reverse=descending,
+        )
+    else:
+        rows.sort(key=lambda r: (_none_last(r["market_output_per_1m"]), r["id"]))
     return JSONResponse(
         {
             "count": len(rows),
@@ -364,6 +389,40 @@ async def admin_models(
             "models": rows[: max(1, limit)],
         }
     )
+
+
+@app.get("/admin/api/models/{model_id}")
+async def admin_model_detail(model_id: str) -> JSONResponse:
+    """Full dossier for one model: per-provider offers, trend, capability."""
+    filters = maybe_reload_config().filters
+    model = state.catalog.models.get(model_id)
+    if model is None:
+        return JSONResponse(
+            status_code=404, content={"error": f"Unknown model '{model_id}'."}
+        )
+    return JSONResponse(model.to_detail(evaluate(model, filters)))
+
+
+@app.get("/admin/api/account")
+async def admin_account(refresh: bool = False) -> JSONResponse:
+    """Balance + spend overview, fetched upstream with the owner's key."""
+    cfg = maybe_reload_config()
+    key, _source = resolve_api_key(cfg)
+    data = await account_reader.account(
+        state.client, cfg.upstream.base_url, key, force=refresh
+    )
+    return JSONResponse(data)
+
+
+@app.get("/admin/api/account/requests")
+async def admin_account_requests(request: Request) -> JSONResponse:
+    """Pass-through of the upstream request log (cost/model/latency per call)."""
+    cfg = maybe_reload_config()
+    key, _source = resolve_api_key(cfg)
+    data = await account_reader.requests(
+        state.client, cfg.upstream.base_url, key, dict(request.query_params)
+    )
+    return JSONResponse(data)
 
 
 @app.post("/admin/api/refresh")
@@ -428,13 +487,22 @@ async def admin_set_config(request: Request, payload: dict[str, Any]) -> JSONRes
         "enable_models_deny",
         "enable_providers_allow",
         "enable_context_min",
+        "enable_trusted_only",
+        "enable_min_uptime",
+        "enable_max_ttft",
+        "enable_min_tps",
+        "enable_min_sellers",
+        "enable_min_uncapped",
+        "enable_cache_write_cap",
+        "enable_require_features",
+        "enable_exclude_tightening",
         "allow_unknown_models",
     )
     for key in bool_keys:
         if key in incoming:
             setattr(filters, key, bool(incoming[key]))
 
-    list_keys = ("allow_models", "deny_models", "allow_providers")
+    list_keys = ("allow_models", "deny_models", "allow_providers", "require_features")
     for key in list_keys:
         if key in incoming:
             value = incoming[key]
@@ -443,13 +511,25 @@ async def admin_set_config(request: Request, payload: dict[str, Any]) -> JSONRes
             elif isinstance(value, list):
                 setattr(filters, key, [str(i).strip() for i in value if str(i).strip()])
 
-    float_keys = ("max_input_per_1m", "max_output_per_1m")
+    float_keys = (
+        "max_input_per_1m",
+        "max_output_per_1m",
+        "min_uptime_pct",
+        "max_ttft_ms",
+        "min_tps",
+        "max_cache_write_per_1m",
+    )
     for key in float_keys:
         if key in incoming:
             with contextlib.suppress(TypeError, ValueError):
                 setattr(filters, key, max(0.0, float(incoming[key])))
 
-    int_keys = ("min_discount_pct", "min_context_length")
+    int_keys = (
+        "min_discount_pct",
+        "min_context_length",
+        "min_healthy_sellers",
+        "min_uncapped_offers",
+    )
     for key in int_keys:
         if key in incoming:
             with contextlib.suppress(TypeError, ValueError):

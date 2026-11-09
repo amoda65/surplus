@@ -1,11 +1,14 @@
-"""Catalog cache: fetch upstream model, reference-price and marketplace data.
+"""Catalog cache: fetch upstream model, reference-price and market data.
 
 Three public endpoints are joined per model:
 
-- ``GET /v1/models``      catalog + list prices (per-token decimal strings)
-- ``GET /v1/prices``      provider reference prices (USD per 1M tokens)
-- ``GET /api/marketplace`` the actual best live offer per model, in microdollars
-                          per 1M tokens, plus discount and seller counts
+- ``GET /v1/models``   catalog + list prices (per-token decimal strings)
+- ``GET /v1/prices``   provider reference prices (USD per 1M tokens)
+- ``GET /api/markets`` the actual best live offer per model, in microdollars
+                       per 1M tokens, plus quality (uptime/TTFT/TPS), liquidity,
+                       discount trend and per-provider offers with trust flags.
+                       ``GET /api/marketplace`` is kept as a fallback: it carries
+                       the same core price fields in a ``data``-wrapped envelope.
 
 A failed refresh never wipes existing data; the caller marks the cache stale.
 Nothing here blocks request handling - the gate always reads the cache.
@@ -28,6 +31,9 @@ from .filters import (
 )
 
 log = logging.getLogger("surplus.catalog")
+
+# Tried in order; the first endpoint that returns market rows wins.
+MARKET_ENDPOINTS = ("/api/markets", "/api/marketplace")
 
 
 def _reference_from_prices(prices_payload: dict) -> dict[str, dict[str, float | None]]:
@@ -56,15 +62,25 @@ def _reference_from_prices(prices_payload: dict) -> dict[str, dict[str, float | 
     return references
 
 
+def _market_rows(payload: dict) -> list[dict]:
+    """Market rows from either envelope: /api/markets or /api/marketplace."""
+    if not isinstance(payload, dict):
+        return []
+    rows = payload.get("markets")
+    if rows is None:
+        rows = (payload.get("data") or {}).get("markets")
+    return rows if isinstance(rows, list) else []
+
+
 def _market_from_payload(marketplace_payload: dict) -> dict[str, dict]:
-    """Index /api/marketplace offers by model id, keeping microdollar values.
+    """Index live market offers by model id, keeping microdollar values.
 
     Unit conversion to USD happens in filters.ModelInfo so this stays a faithful
-    copy of what upstream returned.
+    copy of what upstream returned. Works for both /api/markets and the older
+    /api/marketplace envelope; fields the older endpoint lacks stay None.
     """
-    data = marketplace_payload.get("data") or {}
     markets: dict[str, dict] = {}
-    for entry in data.get("markets") or []:
+    for entry in _market_rows(marketplace_payload):
         model_id = entry.get("model")
         if not model_id:
             continue
@@ -77,8 +93,23 @@ def _market_from_payload(marketplace_payload: dict) -> dict[str, dict]:
             "direct_output_micro_per_1m": entry.get("direct_output_per_1m"),
             "best_live_discount_pct": entry.get("best_live_discount_pct"),
             "best_discount_pct": entry.get("best_discount_pct"),
+            "best_trusted_offer_discount_pct": entry.get("best_trusted_offer_discount_pct"),
             "healthy_seller_count": entry.get("healthy_seller_count"),
             "num_sellers": entry.get("num_sellers"),
+            "uncapped_offer_count": entry.get("uncapped_discounted_offer_count"),
+            "liquidity_micro_usd": entry.get("discounted_liquidity_usd"),
+            "cache_read_micro_per_1m": entry.get("best_cache_read_per_1m"),
+            "cache_write_micro_per_1m": entry.get("best_cache_write_per_1m"),
+            "cache_hit_rate_pct": entry.get("cache_hit_rate_pct"),
+            "uptime_pct": entry.get("uptime_pct"),
+            "ttft_p50_ms": entry.get("ttft_p50_ms"),
+            "tps_p50": entry.get("tps_p50"),
+            "tps_samples": entry.get("tps_samples"),
+            "ttft_samples": entry.get("ttft_samples"),
+            "requests_24h": entry.get("requests_24h"),
+            "volume_24h_micro_usd": entry.get("volume_24h"),
+            "discount_trend": entry.get("discount_trend"),
+            "providers": entry.get("providers"),
         }
     return markets
 
@@ -92,6 +123,7 @@ class Catalog:
         self.upstream_updated_at: str | None = None
         self.market_computed_at: int | None = None
         self.market_count = 0
+        self.market_source: str | None = None
         self.last_error: str | None = None
         self.refresh_count = 0
 
@@ -105,17 +137,30 @@ class Catalog:
             return True
         return (time.time() - self.last_fetch_at) > (ttl_seconds * 2)
 
+    async def _fetch_markets(self, client: httpx.AsyncClient) -> tuple[str, dict] | None:
+        """First market endpoint that answers with rows; None when all fail."""
+        for path in MARKET_ENDPOINTS:
+            try:
+                resp = await client.get(f"{self.base_url}{path}")
+                resp.raise_for_status()
+                payload = resp.json()
+            except (httpx.HTTPError, ValueError) as exc:
+                log.warning("market endpoint %s failed: %s", path, exc)
+                continue
+            if _market_rows(payload):
+                return path, payload
+            log.warning("market endpoint %s returned no rows", path)
+        return None
+
     async def refresh(self, client: httpx.AsyncClient) -> bool:
-        """Fetch all three endpoints. Returns True on success."""
+        """Fetch catalog, reference prices and live markets. True on success."""
         try:
-            models_resp, prices_resp, market_resp = await asyncio.gather(
+            models_resp, prices_resp = await asyncio.gather(
                 client.get(f"{self.base_url}/v1/models"),
                 client.get(f"{self.base_url}/v1/prices"),
-                client.get(f"{self.base_url}/api/marketplace"),
             )
             models_resp.raise_for_status()
             prices_resp.raise_for_status()
-            market_resp.raise_for_status()
         except httpx.HTTPError as exc:
             self.last_error = f"{type(exc).__name__}: {exc}"
             log.warning("catalog refresh failed, keeping last-good copy: %s", self.last_error)
@@ -124,7 +169,6 @@ class Catalog:
         try:
             models_payload = models_resp.json()
             prices_payload = prices_resp.json()
-            market_payload = market_resp.json()
         except ValueError as exc:
             self.last_error = f"InvalidJSON: {exc}"
             log.warning("catalog refresh got invalid JSON: %s", self.last_error)
@@ -136,14 +180,17 @@ class Catalog:
             log.warning(self.last_error)
             return False
 
-        references = _reference_from_prices(prices_payload)
-        markets = _market_from_payload(market_payload)
-        if not markets:
+        fetched = await self._fetch_markets(client)
+        if fetched is None:
             # Without offers we cannot price anything; refuse to publish a catalog
             # that would reject or accept every model for the wrong reason.
             self.last_error = "EmptyMarketplace: upstream returned no market offers"
             log.warning(self.last_error)
             return False
+        market_path, market_payload = fetched
+
+        references = _reference_from_prices(prices_payload)
+        markets = _market_from_payload(market_payload)
 
         parsed: dict[str, ModelInfo] = {}
         for entry in entries:
@@ -161,13 +208,15 @@ class Catalog:
         self.upstream_updated_at = prices_payload.get("updated_at")
         self.market_computed_at = (market_payload.get("data") or {}).get("computed_at")
         self.market_count = len(markets)
+        self.market_source = market_path
         self.last_fetch_at = time.time()
         self.last_error = None
         self.refresh_count += 1
         summary = self.class_summary()
         log.info(
-            "catalog refreshed: %d models, %d with live offers "
+            "catalog refreshed from %s: %d models, %d with live offers "
             "(%d token-priced, %d media-unit, %d unpriced, %d without offer)",
+            market_path,
             len(parsed),
             len(markets),
             summary[CLASS_TOKEN],
@@ -191,6 +240,7 @@ class Catalog:
         return {
             "model_count": len(self.models),
             "market_offer_count": self.market_count,
+            "market_source": self.market_source,
             "providers": self.providers,
             "last_fetch_at": self.last_fetch_at,
             "last_fetch_iso": (

@@ -29,12 +29,15 @@ is served by the same app at `/admin`.
 | filters | every filter type has its own enable toggle; values apply only while enabled |
 | price freshness | background refresh on TTL + refresh at startup + manual **Refresh now** button |
 | price cap unit | USD per 1M tokens |
-| price source for caps | the **actual marketplace offer** (`/api/marketplace`), not the list price |
+| price source for caps | the **actual market offer** (`/api/markets`, fallback `/api/marketplace`), not the list price |
 | cap boundary | inclusive ("at most"): a price exactly at the cap passes |
 | models with no live offer | rejected fail-closed (`no_market_offer`) |
 | models priced per media unit (image/video/audio jobs) | rejected fail-closed (`not_token_priced`) |
 | discount filter | upstream `/min{N}/v1/...` rewrite + local check on `best_live_discount_pct` |
 | unknown model | reject (fail-closed) unless `allow_unknown_models = true` |
+| quality filters (uptime/TTFT/TPS) | **fail open** on missing measurements — the marketplace only samples markets with traffic |
+| trusted_only mode | caps + discount floor apply to the best offer among `providers[].trusted`; no trusted offer → `no_trusted_offer` |
+| account panel | read-only balance/usage via the owner's key; the key is used server-side and never returned to the browser |
 
 ## Upstream API facts (verified 2026-11-09, live probes)
 
@@ -42,7 +45,11 @@ is served by the same app at `/admin`.
 |---|---|---|
 | `GET /v1/models` | none | `{data: [{id, name, provider, context_length, architecture:{input_modalities, output_modalities}, pricing:{prompt, completion, input_cache_read, input_cache_write}, supported_features}]}` — 524 models; pricing is the **list price** in per-token decimal strings (docs: "multiply by 1M for $/1M tokens rate") |
 | `GET /v1/prices` | none | `{models: [{model, displayName, modelProvider, providers: [{provider, providerName, pricing:{input, output, cacheRead}}]}], providers: [...], updated_at}` — provider reference prices, **USD per 1M tokens** |
-| `GET /api/marketplace` | none | `{data: {markets: [{model, best_input_per_1m, best_output_per_1m, best_media_unit_price, media_unit, direct_input_per_1m, direct_output_per_1m, best_live_discount_pct, best_discount_pct, healthy_seller_count, num_sellers, ...}], computed_at, ...}}` — **the actual best live offer, in microdollars per 1M tokens** |
+| `GET /api/marketplace` | none | `{data: {markets: [{model, best_input_per_1m, best_output_per_1m, best_media_unit_price, media_unit, direct_input_per_1m, direct_output_per_1m, best_live_discount_pct, best_discount_pct, healthy_seller_count, num_sellers, ...}], computed_at, ...}}` — **the actual best live offer, in microdollars per 1M tokens** (kept as fallback) |
+| `GET /api/markets` | none | `{markets: [...]}` — same core price fields **plus** per-model quality (`uptime_pct`, `ttft_p50_ms`, `tps_p50`, sample counts), liquidity (`uncapped_discounted_offer_count`, `discounted_liquidity_usd` in µ$), activity (`requests_24h`, `volume_24h`/`credits_sold_24h` in µ$), cache pricing (`best_cache_read_per_1m`, `best_cache_write_per_1m`), `discount_trend` (`direction`: deepening/tightening/stable), `best_trusted_offer_discount_pct`, and `providers[]` with a per-provider `trusted` flag and best prices. Primary market source since stage 5c. |
+| `GET /v1/payments/balance` | Bearer key | spendable balance; every money value is an integer-**microdollar string** (`credit_balance_usdc` = fiat + deposited USDC = what to show as "Credits") |
+| `GET /v1/buyer/overview?range=7d\|30d\|90d` | Bearer key | spend, savings, top models; `coverage: false` means "not computed", never render as 0 |
+| `GET /v1/requests?limit&cursor&model&statuses…` | Bearer key | the request log — per-call cost, model, provider, latency; cursor-paginated |
 | `POST /v1/chat/completions` | Bearer key | OpenAI-compatible, SSE streaming |
 | `/anthropic/*` | Bearer key | Anthropic Messages skin (Claude Code, Anthropic SDK) |
 | `/min{N}/v1/...` | Bearer key | upstream minimum-discount routing; N integer 0..100, no leading zeros or decimals |
@@ -85,7 +92,16 @@ Toggleable:
 |---|---|---|
 | `price_input` | **market** input price cap, USD per 1M | `max_input_per_1m` |
 | `price_output` | **market** output price cap, USD per 1M | `max_output_per_1m` |
+| `cache_write_cap` | cap on cache-write price (often ~10x input), USD per 1M | `max_cache_write_per_1m` |
+| `no_trusted_offer` | (with `trusted_only`) no trusted provider serves the model | `enable_trusted_only` |
 | `discount` | minimum discount % below list price | `min_discount_pct` |
+| `exclude_tightening` | reject markets whose discount trend is `tightening` | `enable_exclude_tightening` |
+| `min_uptime` | minimum measured uptime % (fails open when unmeasured) | `min_uptime_pct` |
+| `max_ttft` | maximum median time-to-first-token ms (fails open) | `max_ttft_ms` |
+| `min_tps` | minimum median tokens/second (fails open) | `min_tps` |
+| `min_sellers` | minimum healthy sellers (thin markets flip to no-offer mid-run) | `min_healthy_sellers` |
+| `min_uncapped` | minimum uncapped discounted offers (capped offers run dry) | `min_uncapped_offers` |
+| `require_features` | model must support ALL listed features (e.g. streaming, tools) | `require_features` |
 | `models_allow` | allow list of model ids | `allow_models` |
 | `models_deny` | deny list of model ids (wins over allow) | `deny_models` |
 | `providers_allow` | allow list of providers | `allow_providers` |
@@ -124,16 +140,30 @@ Rules:
    Port changes need a restart; the UI says so explicitly.
 2. **API key** — masked input; save writes `config.ini`; status shows
    `set (env)`, `set (file)` or `missing`. Never echoed back in full.
-3. **Filters** — one card per filter type with an enable toggle and inputs, plus
-   a live preview of how many cached models pass.
-4. **Catalog** — refresh button, last refresh time, staleness badge, searchable
-   table: model, provider, input/output price per 1M, context, pass/fail + reason.
-5. **Connect your agent** — copy-paste snippets: OpenAI SDK `base_url`,
+3. **Account — balance & usage** — spendable credits (fiat + USDC split), held
+   and pending amounts, account status, 7d/30d spend overviews and the upstream
+   per-request log (time, model, provider, status, latency, cost) with cursor
+   pagination. Read-only; degrades to a hint when no key is set or the key lacks
+   `usage.read`.
+4. **Filters** — grouped cards (Price caps / Discount & trend / Market quality /
+   Market depth / Capability / Lists), each with an enable toggle and inputs,
+   plus a live preview of how many cached models pass.
+5. **Catalog** — refresh button, staleness badge, market source, searchable
+   table with class/provider filters and sortable columns (market in/out,
+   trusted out, discount, sellers/uncapped, uptime, TTFT, TPS, 24h msgs,
+   context) in both directions. Clicking a row opens a **detail drawer**:
+   what-you-pay vs trusted vs list prices, cache economics, market depth and
+   activity, quality measurements with sample counts, discount trend,
+   capability badges and the per-provider offer table (trusted flagged).
+6. **Connect your agent** — copy-paste snippets: OpenAI SDK `base_url`,
    Claude Code env vars, generic OpenAI-compatible client.
 
 Admin API (JSON, localhost only): `GET/POST /admin/api/config`,
-`POST /admin/api/refresh`, `GET /admin/api/models` (annotated pass/fail reasons),
-`GET /admin/api/status`.
+`POST /admin/api/refresh`, `GET /admin/api/models` (annotated, filterable by
+`q`/`passed_only`/`price_class`/`provider`, sortable by `sort`+`dir`),
+`GET /admin/api/models/{id}` (full dossier), `GET /admin/api/account` and
+`GET /admin/api/account/requests` (upstream balance/usage, key stays
+server-side), `GET /admin/api/status`.
 
 ## Config — `config.ini` (gitignored), `config.example.ini` (committed)
 
@@ -178,6 +208,22 @@ enable_providers_allow = false
 allow_providers =
 enable_context_min = false
 min_context_length = 32000
+enable_trusted_only = false        ; caps/discount on trusted-provider offers only
+enable_min_uptime = false
+min_uptime_pct = 90
+enable_max_ttft = false
+max_ttft_ms = 5000
+enable_min_tps = false
+min_tps = 20
+enable_min_sellers = false
+min_healthy_sellers = 3
+enable_min_uncapped = false
+min_uncapped_offers = 1
+enable_cache_write_cap = false
+max_cache_write_per_1m = 1.0
+enable_require_features = false
+require_features = streaming, tools
+enable_exclude_tightening = false
 allow_unknown_models = false
 ```
 
@@ -223,6 +269,12 @@ JS build toolchain.
    `uv tool install --editable .`, busy-port fail-fast, `--host/--port/--config/
    --no-browser`, browser auto-open once the socket accepts connections, and
    config resolution that works from any directory (`%APPDATA%\surplus-router`)
+5c. ✅ **Market intelligence upgrade**: catalog moved to `/api/markets`
+   (fallback `/api/marketplace`); 9 new filters (trusted-only, cache-write cap,
+   uptime/TTFT/TPS, sellers/uncapped depth, required features, tightening
+   trend); account panel (balance + usage + request log) via the owner's key;
+   model detail drawer; sortable/filterable catalog table — 120 unit tests,
+   18/18 local + 40/40 admin checks green against the live API
 6. **Anthropic skin**: `/anthropic/*` passthrough + filtered model list
 7. **End-to-end verification**: OpenAI SDK and Claude Code through the proxy;
    rejection test for a capped-out model; streaming test; refresh test

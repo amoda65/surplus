@@ -151,11 +151,12 @@ masked in the admin UI).
 
 ## Filters
 
-Caps apply to the **actual marketplace price** — what you pay — taken from
-`/api/marketplace` (`best_input_per_1m` / `best_output_per_1m`, microdollars per
-1M tokens). The list price from `/v1/models` is shown in the panel for reference
-but is not what the caps check; marketplace discounts are commonly 95–99.9%, so
-filtering on list price would let almost everything through.
+Caps apply to the **actual market price** — what you pay — taken from
+`/api/markets` (`best_input_per_1m` / `best_output_per_1m`, microdollars per
+1M tokens; `/api/marketplace` is kept as a fallback). The list price from
+`/v1/models` is shown in the panel for reference but is not what the caps check;
+marketplace discounts are commonly 95–99.9%, so filtering on list price would
+let almost everything through.
 
 Example: `qwen3.8-max-0902` lists at $2.0/$6.0 per 1M but trades at
 **$0.0022/$0.0065** per 1M (99.9% discount, 233 healthy sellers).
@@ -174,7 +175,16 @@ Toggleable, each with its own switch:
 |---|---|---|
 | input price cap | `enable_price_input`, `max_input_per_1m` | market `$/1M <= cap` (inclusive) |
 | output price cap | `enable_price_output`, `max_output_per_1m` | market `$/1M <= cap` (inclusive) |
+| cache-write cap | `enable_cache_write_cap`, `max_cache_write_per_1m` | cache writes often cost ~10x input; cap them separately |
+| trusted only | `enable_trusted_only` | caps/discount apply to the best **trusted**-provider offer; no trusted offer → `no_trusted_offer` |
 | min discount | `enable_discount`, `min_discount_pct` | local check on `best_live_discount_pct` + upstream `/min{N}/v1/...` rewrite |
+| exclude tightening | `enable_exclude_tightening` | reject markets whose discount trend is getting worse |
+| min uptime | `enable_min_uptime`, `min_uptime_pct` | measured uptime % (unmeasured markets pass) |
+| max TTFT | `enable_max_ttft`, `max_ttft_ms` | median time-to-first-token (unmeasured pass) |
+| min TPS | `enable_min_tps`, `min_tps` | median tokens/second (unmeasured pass) |
+| min sellers | `enable_min_sellers`, `min_healthy_sellers` | thin markets flip to no-offer mid-run |
+| min uncapped offers | `enable_min_uncapped`, `min_uncapped_offers` | capped offers run dry mid-job |
+| required features | `enable_require_features`, `require_features` | model must support ALL listed features (e.g. `streaming, tools`) |
 | allow models | `enable_models_allow`, `allow_models` | id must be listed |
 | deny models | `enable_models_deny`, `deny_models` | wins over allow |
 | allow providers | `enable_providers_allow`, `allow_providers` | provider must be listed |
@@ -184,21 +194,30 @@ A rejected request returns `403` with `failed_filters` naming every rule that
 refused it, plus the market and list prices in the message, and never reaches
 upstream.
 
+## Account panel (balance & usage)
+
+With an API key set, the panel shows your live Surplus account: spendable
+credits (fiat + withdrawable USDC), held/pending amounts, 7d/30d spend
+overviews, and the per-request log (time, model, provider, status, latency,
+cost) with pagination. It is **read-only**; the key is used server-side and
+never sent to the browser. Without a key (or with a key missing `usage.read`)
+the section degrades to a hint instead of failing.
+
 ## Price freshness
 
-The catalog (`/v1/models` + `/v1/prices` + `/api/marketplace`) is refreshed at
+The catalog (`/v1/models` + `/v1/prices` + `/api/markets`) is refreshed at
 startup, every `catalog_ttl_seconds` (default 300), and on demand via
 `POST /admin/api/refresh`. A failed refresh keeps serving the last-good copy and
-flags `stale` in `/admin/api/status`. An empty marketplace response is treated as
+flags `stale` in `/admin/api/status`. An empty market response is treated as
 a failed refresh, never as "everything is free". Requests never block on a
 refresh.
 
 ## Verify
 
 ```bash
-uv run python scripts/verify_local.py   # boots the router on port 8499, 13 checks
-uv run python scripts/verify_admin.py   # admin panel + config API, 27 checks
-uv run pytest -q                         # 48 unit tests
+uv run python scripts/verify_local.py   # boots the router on a test port, 18 checks
+uv run python scripts/verify_admin.py   # admin panel + config API, 40 checks
+uv run pytest -q                         # 120 unit tests
 uv run ruff check surplus scripts tests
 ```
 
@@ -206,8 +225,9 @@ uv run ruff check surplus scripts tests
 
 ```
 surplus/config.py    config.ini load/save, atomic write, env key override, masking
-surplus/catalog.py   TTL cache of upstream models + reference prices
+surplus/catalog.py   TTL cache of upstream models + reference prices + live markets
 surplus/filters.py   pure filter evaluation (unit-testable)
+surplus/account.py   read-only balance/usage proxy (key stays server-side)
 surplus/proxy.py     streaming passthrough, header handling
 surplus/main.py      FastAPI app: admin API, gate, /v1 routes, refresh loop
 surplus/static/      admin panel (index.html, app.js, style.css) - no build step

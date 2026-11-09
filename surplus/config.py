@@ -78,6 +78,22 @@ DEFAULTS: dict[str, dict[str, str]] = {
         "allow_providers": "",
         "enable_context_min": "false",
         "min_context_length": "32000",
+        "enable_trusted_only": "false",
+        "enable_min_uptime": "false",
+        "min_uptime_pct": "90",
+        "enable_max_ttft": "false",
+        "max_ttft_ms": "5000",
+        "enable_min_tps": "false",
+        "min_tps": "20",
+        "enable_min_sellers": "false",
+        "min_healthy_sellers": "3",
+        "enable_min_uncapped": "false",
+        "min_uncapped_offers": "1",
+        "enable_cache_write_cap": "false",
+        "max_cache_write_per_1m": "1.0",
+        "enable_require_features": "false",
+        "require_features": "streaming, tools",
+        "enable_exclude_tightening": "false",
         "allow_unknown_models": "false",
     },
 }
@@ -113,6 +129,29 @@ class FilterConfig:
     allow_providers: list[str] = field(default_factory=list)
     enable_context_min: bool = False
     min_context_length: int = 32000
+    # trusted_only: caps/discount apply to the best TRUSTED-provider offer, and
+    # a model with no trusted offer is rejected (no_trusted_offer).
+    enable_trusted_only: bool = False
+    # quality gates; missing marketplace measurements fail open
+    enable_min_uptime: bool = False
+    min_uptime_pct: float = 90.0
+    enable_max_ttft: bool = False
+    max_ttft_ms: float = 5000.0
+    enable_min_tps: bool = False
+    min_tps: float = 20.0
+    # market depth
+    enable_min_sellers: bool = False
+    min_healthy_sellers: int = 3
+    enable_min_uncapped: bool = False
+    min_uncapped_offers: int = 1
+    # cache economics
+    enable_cache_write_cap: bool = False
+    max_cache_write_per_1m: float = 1.0
+    # capability
+    enable_require_features: bool = False
+    require_features: list[str] = field(default_factory=list)
+    # discount trend
+    enable_exclude_tightening: bool = False
     allow_unknown_models: bool = False
 
 
@@ -229,6 +268,22 @@ def load_config(path: Path | str | None = None) -> AppConfig:
         allow_providers=_split_csv(filter_raw.get("allow_providers", "")),
         enable_context_min=_to_bool(filter_raw.get("enable_context_min"), False),
         min_context_length=_to_int(filter_raw.get("min_context_length"), 32000),
+        enable_trusted_only=_to_bool(filter_raw.get("enable_trusted_only"), False),
+        enable_min_uptime=_to_bool(filter_raw.get("enable_min_uptime"), False),
+        min_uptime_pct=_to_float(filter_raw.get("min_uptime_pct"), 90.0),
+        enable_max_ttft=_to_bool(filter_raw.get("enable_max_ttft"), False),
+        max_ttft_ms=_to_float(filter_raw.get("max_ttft_ms"), 5000.0),
+        enable_min_tps=_to_bool(filter_raw.get("enable_min_tps"), False),
+        min_tps=_to_float(filter_raw.get("min_tps"), 20.0),
+        enable_min_sellers=_to_bool(filter_raw.get("enable_min_sellers"), False),
+        min_healthy_sellers=_to_int(filter_raw.get("min_healthy_sellers"), 3),
+        enable_min_uncapped=_to_bool(filter_raw.get("enable_min_uncapped"), False),
+        min_uncapped_offers=_to_int(filter_raw.get("min_uncapped_offers"), 1),
+        enable_cache_write_cap=_to_bool(filter_raw.get("enable_cache_write_cap"), False),
+        max_cache_write_per_1m=_to_float(filter_raw.get("max_cache_write_per_1m"), 1.0),
+        enable_require_features=_to_bool(filter_raw.get("enable_require_features"), False),
+        require_features=_split_csv(filter_raw.get("require_features", "")),
+        enable_exclude_tightening=_to_bool(filter_raw.get("enable_exclude_tightening"), False),
         allow_unknown_models=_to_bool(filter_raw.get("allow_unknown_models"), False),
     )
 
@@ -271,6 +326,22 @@ def _to_parser(cfg: AppConfig) -> configparser.ConfigParser:
         "allow_providers": ", ".join(f.allow_providers),
         "enable_context_min": str(f.enable_context_min).lower(),
         "min_context_length": str(f.min_context_length),
+        "enable_trusted_only": str(f.enable_trusted_only).lower(),
+        "enable_min_uptime": str(f.enable_min_uptime).lower(),
+        "min_uptime_pct": str(f.min_uptime_pct),
+        "enable_max_ttft": str(f.enable_max_ttft).lower(),
+        "max_ttft_ms": str(f.max_ttft_ms),
+        "enable_min_tps": str(f.enable_min_tps).lower(),
+        "min_tps": str(f.min_tps),
+        "enable_min_sellers": str(f.enable_min_sellers).lower(),
+        "min_healthy_sellers": str(f.min_healthy_sellers),
+        "enable_min_uncapped": str(f.enable_min_uncapped).lower(),
+        "min_uncapped_offers": str(f.min_uncapped_offers),
+        "enable_cache_write_cap": str(f.enable_cache_write_cap).lower(),
+        "max_cache_write_per_1m": str(f.max_cache_write_per_1m),
+        "enable_require_features": str(f.enable_require_features).lower(),
+        "require_features": ", ".join(f.require_features),
+        "enable_exclude_tightening": str(f.enable_exclude_tightening).lower(),
         "allow_unknown_models": str(f.allow_unknown_models).lower(),
     }
     return parser
@@ -339,6 +410,22 @@ def public_view(cfg: AppConfig) -> dict:
             "allow_providers": cfg.filters.allow_providers,
             "enable_context_min": cfg.filters.enable_context_min,
             "min_context_length": cfg.filters.min_context_length,
+            "enable_trusted_only": cfg.filters.enable_trusted_only,
+            "enable_min_uptime": cfg.filters.enable_min_uptime,
+            "min_uptime_pct": cfg.filters.min_uptime_pct,
+            "enable_max_ttft": cfg.filters.enable_max_ttft,
+            "max_ttft_ms": cfg.filters.max_ttft_ms,
+            "enable_min_tps": cfg.filters.enable_min_tps,
+            "min_tps": cfg.filters.min_tps,
+            "enable_min_sellers": cfg.filters.enable_min_sellers,
+            "min_healthy_sellers": cfg.filters.min_healthy_sellers,
+            "enable_min_uncapped": cfg.filters.enable_min_uncapped,
+            "min_uncapped_offers": cfg.filters.min_uncapped_offers,
+            "enable_cache_write_cap": cfg.filters.enable_cache_write_cap,
+            "max_cache_write_per_1m": cfg.filters.max_cache_write_per_1m,
+            "enable_require_features": cfg.filters.enable_require_features,
+            "require_features": cfg.filters.require_features,
+            "enable_exclude_tightening": cfg.filters.enable_exclude_tightening,
             "allow_unknown_models": cfg.filters.allow_unknown_models,
         },
         "config_path": str(cfg.config_path) if cfg.config_path else None,

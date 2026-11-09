@@ -252,3 +252,69 @@ td.num.muted, .num.muted { color: var(--muted); }
   box-shadow: 0 4px 16px rgba(0,0,0,.2);
 }
 .hidden { display: none !important; }
+
+/* ------------------------------------------------------- filter groups */
+.filter-group {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin: 0 0 14px;
+  padding: 10px 12px 12px;
+}
+.filter-group legend {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--muted);
+  padding: 0 6px;
+}
+.filter-group .hint { margin: 0 0 10px; }
+
+/* ------------------------------------------------------- account panel */
+.card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.card-head h2 { margin: 0 0 6px; }
+.count.accent { border-color: var(--accent); }
+.count.accent b { color: var(--accent); }
+.overview-row { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 12px; }
+.overview { flex: 1 1 300px; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+.overview h3, .drawer-body h3, #account-body h3 {
+  font-size: 12px; text-transform: uppercase; letter-spacing: .05em;
+  color: var(--muted); margin: 14px 0 8px;
+}
+#account-body h3 { display: flex; align-items: center; gap: 10px; }
+.overview .kv { margin-bottom: 0; }
+.account-empty { color: var(--muted); font-size: 13px; }
+.table-wrap.small { max-height: 260px; }
+
+/* ------------------------------------------------------- model table */
+tr.clickable { cursor: pointer; }
+.trend-ok { color: var(--ok); }
+.trend-bad { color: var(--bad); }
+
+/* ------------------------------------------------------- drawer */
+.drawer-backdrop {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,.35);
+  z-index: 20;
+}
+.drawer {
+  position: fixed; top: 0; right: 0; bottom: 0;
+  width: min(560px, 94vw);
+  background: var(--card);
+  border-left: 1px solid var(--border);
+  box-shadow: -8px 0 32px rgba(0,0,0,.18);
+  z-index: 21;
+  display: flex; flex-direction: column;
+}
+.drawer-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  font-size: 14px;
+}
+.drawer-body { padding: 14px 16px 30px; overflow-y: auto; }
+.drawer-status { margin-bottom: 10px; }
+.drawer-body .desc { color: var(--muted); font-size: 12.5px; margin: 0 0 8px; }
+.drawer-body .kv { grid-template-columns: 1fr auto; }
+.drawer-body .kv span { color: var(--muted); }
+.drawer-body .kv strong { text-align: right; }

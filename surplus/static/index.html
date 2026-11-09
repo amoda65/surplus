@@ -45,7 +45,7 @@
     <div class="field">
       <label for="f-ttl">Price refresh interval (seconds)</label>
       <input id="f-ttl" type="number" min="5" step="5">
-      <span class="note">How often the router re-reads <code>/v1/models</code> and <code>/v1/prices</code>.</span>
+      <span class="note">How often the router re-reads <code>/v1/models</code>, <code>/v1/prices</code> and <code>/api/markets</code>.</span>
     </div>
     <div class="field">
       <label for="f-timeout">Request timeout (seconds)</label>
@@ -92,13 +92,22 @@
     </div>
   </section>
 
+  <section class="card wide" id="account-card">
+    <div class="card-head">
+      <h2>Account — balance &amp; usage</h2>
+      <button class="btn" id="account-refresh" type="button">Refresh</button>
+    </div>
+    <p class="hint">Live from Surplus with your configured key: spendable balance, recent spend and the per-request log.</p>
+    <div id="account-body"><p class="hint">Loading…</p></div>
+  </section>
+
   <section class="card wide">
     <h2>Filters</h2>
     <p class="hint">
       Each filter applies only while enabled. A model is forwarded only if it passes every enabled filter.
       <strong id="filter-preview">—</strong>
     </p>
-    <div id="filter-cards" class="filter-grid"></div>
+    <div id="filter-groups"></div>
     <div class="field inline">
       <label class="switch">
         <input type="checkbox" id="f-allow-unknown">
@@ -117,14 +126,35 @@
     <div class="toolbar">
       <input id="model-search" type="search" placeholder="Search model id or name…" spellcheck="false">
       <label class="check"><input type="checkbox" id="model-passed-only"> passing only</label>
+      <select id="model-class" title="Price class">
+        <option value="">all classes</option>
+        <option value="token">token priced</option>
+        <option value="media_unit">media/unit priced</option>
+        <option value="unpriced">unpriced</option>
+        <option value="no_offer">no live offer</option>
+      </select>
+      <select id="model-provider" title="Provider">
+        <option value="">all providers</option>
+      </select>
       <select id="model-sort">
         <option value="output">sort: market output price</option>
         <option value="input">sort: market input price</option>
+        <option value="trusted_output">sort: trusted output price</option>
         <option value="list_output">sort: list output price</option>
         <option value="discount">sort: discount</option>
         <option value="sellers">sort: healthy sellers</option>
+        <option value="uncapped">sort: uncapped offers</option>
+        <option value="uptime">sort: uptime</option>
+        <option value="ttft">sort: TTFT</option>
+        <option value="tps">sort: TPS</option>
+        <option value="requests">sort: 24h requests</option>
+        <option value="liquidity">sort: liquidity</option>
         <option value="context">sort: context</option>
         <option value="name">sort: name</option>
+      </select>
+      <select id="model-dir" title="Sort direction">
+        <option value="asc">asc</option>
+        <option value="desc">desc</option>
       </select>
       <span class="note" id="model-count"></span>
     </div>
@@ -133,15 +163,22 @@
         <thead>
           <tr>
             <th>Model</th><th>Provider</th>
-            <th class="num">Market in $/1M</th><th class="num">Market out $/1M</th>
-            <th class="num">List in $/1M</th><th class="num">List out $/1M</th>
-            <th class="num">Discount</th><th class="num">Sellers</th>
-            <th class="num">Context</th><th>Status</th>
+            <th class="num">In $/1M</th><th class="num">Out $/1M</th>
+            <th class="num">Disc %</th>
+            <th class="num" title="Healthy sellers / uncapped offers">Sell</th>
+            <th class="num" title="Uptime percent">Up %</th>
+            <th class="num" title="Median time to first token, ms">TTFT</th>
+            <th class="num" title="Median tokens per second">TPS</th>
+            <th class="num" title="Requests in the last 24h">24h</th>
+            <th class="num">Ctx</th>
+            <th class="num" title="Best trusted-provider output price, $/1M">Trusted</th>
+            <th>Status</th>
           </tr>
         </thead>
         <tbody></tbody>
       </table>
     </div>
+    <p class="hint">Click any row for the full dossier: per-provider offers, quality samples, discount trend and capabilities.</p>
   </section>
 
   <section class="card wide">
@@ -150,6 +187,15 @@
     <div id="snippets"></div>
   </section>
 </main>
+
+<div class="drawer-backdrop hidden" id="drawer-backdrop"></div>
+<aside class="drawer hidden" id="drawer" aria-hidden="true">
+  <div class="drawer-head">
+    <strong id="drawer-title">Model</strong>
+    <button class="btn" id="drawer-close" type="button" aria-label="Close">✕</button>
+  </div>
+  <div class="drawer-body" id="drawer-body"></div>
+</aside>
 
 <div class="toast hidden" id="toast"></div>
 <script src="/admin/assets/app.js"></script>
