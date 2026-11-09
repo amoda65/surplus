@@ -8,14 +8,21 @@ __pycache__/
 .venv/
 venv/
 *.egg-info/
+*.egg
 .pytest_cache/
 .ruff_cache/
 uv.lock.bak
+dist/
+build/
+.coverage
+htmlcov/
 
-# probes / scratch
+# probes / scratch (local live-API dumps, never commit)
 probe_*.json
 *.log
 
-# os
+# editors / os
+.idea/
+.vscode/
 Thumbs.db
 .DS_Store

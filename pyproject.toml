@@ -2,12 +2,32 @@
 name = "surplus-router"
 version = "0.1.0"
 description = "Local price-filtered proxy router for the Surplus Intelligence marketplace"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "amoda65" }]
+keywords = ["llm", "ai", "proxy", "router", "openai", "marketplace", "price-filter"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115",
     "uvicorn>=0.32",
     "httpx>=0.27",
 ]
+
+[project.urls]
+Homepage = "https://github.com/amoda65/surplus"
+Repository = "https://github.com/amoda65/surplus"
+Issues = "https://github.com/amoda65/surplus/issues"
 
 [project.scripts]
 surplus = "surplus.main:main"
