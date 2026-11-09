@@ -1,0 +1,363 @@
+{
+ "models": {
+  "data": [
+   {
+    "id": "openai-gpt-oss-120b",
+    "name": "OpenAI GPT OSS 120B",
+    "created": 1735689600,
+    "description": "OpenAI GPT OSS 120B",
+    "context_length": 128000,
+    "architecture": {
+     "modality": "text->text",
+     "input_modalities": [
+      "text"
+     ],
+     "output_modalities": [
+      "text"
+     ],
+     "tokenizer": "GPT",
+     "instruct_type": null
+    },
+    "pricing": {
+     "prompt": "0.0000000700",
+     "completion": "0.0000003000",
+     "input_cache_read": "0.0000000105",
+     "input_cache_write": "0.0000000700"
+    },
+    "top_provider": {
+     "context_length": 128000,
+     "max_completion_tokens": 16384,
+     "is_moderated": false
+    },
+    "supported_parameters": [
+     "max_tokens",
+     "temperature",
+     "top_p",
+     "stop"
+    ],
+    "supported_features": [
+     "streaming",
+     "tools"
+    ],
+    "provider": "OpenAI",
+    "added_at": 1778943112,
+    "per_request_limits": null
+   },
+   {
+    "id": "minimax-m2.1",
+    "name": "MiniMax M2.1",
+    "created": 1735689600,
+    "description": "MiniMax M2.1",
+    "context_length": 198000,
+    "architecture": {
+     "modality": "text->text",
+     "input_modalities": [
+      "text"
+     ],
+     "output_modalities": [
+      "text"
+     ],
+     "tokenizer": "Other",
+     "instruct_type": null
+    },
+    "pricing": {
+     "prompt": "0.0000000000",
+     "completion": "0.0000000000",
+     "input_cache_read": "0.0000000000",
+     "input_cache_write": "0.0000000000"
+    },
+    "top_provider": {
+     "context_length": 198000,
+     "max_completion_tokens": 32768,
+     "is_moderated": false
+    },
+    "supported_parameters": [
+     "frequency_penalty",
+     "include_reasoning",
+     "logit_bias",
+     "logprobs",
+     "max_tokens",
+     "min_p",
+     "presence_penalty",
+     "reasoning",
+     "repetition_penalty",
+     "response_format",
+     "seed",
+     "stop",
+     "structured_outputs",
+     "temperature",
+     "tool_choice",
+     "tools",
+     "top_k",
+     "top_logprobs",
+     "top_p"
+    ],
+    "supported_features": [
+     "streaming",
+     "tools",
+     "reasoning"
+    ],
+    "provider": "MiniMax",
+    "added_at": 1778943112,
+    "per_request_limits": null
+   },
+   {
+    "id": "gpt-5-image-mini",
+    "name": "GPT-5 Image Mini",
+    "created": 1735689600,
+    "description": "GPT-5 Image Mini (token-metered) via OpenRouter.",
+    "context_length": 0,
+    "architecture": {
+     "modality": "text->image",
+     "input_modalities": [
+      "text"
+     ],
+     "output_modalities": [
+      "image"
+     ],
+     "tokenizer": "Other",
+     "instruct_type": null
+    },
+    "pricing": {
+     "prompt": "0.0000025000",
+     "completion": "0.0000020000"
+    },
+    "top_provider": {
+     "context_length": 0,
+     "max_completion_tokens": 0,
+     "is_moderated": false
+    },
+    "supported_parameters": [
+     "prompt",
+     "model",
+     "n",
+     "size",
+     "quality",
+     "style",
+     "response_format"
+    ],
+    "supported_features": [
+     "image",
+     "token_metered",
+     "response_format",
+     "size",
+     "quality"
+    ],
+    "provider": "OpenAI",
+    "sizes": [
+     "1024x1024",
+     "1024x768",
+     "768x1024",
+     "1536x1024",
+     "1024x1536"
+    ],
+    "metering": "per_token",
+    "added_at": 1782055636,
+    "per_request_limits": null
+   },
+   {
+    "id": "gpt-5.5-pro",
+    "name": "GPT-5.5 Pro",
+    "created": 1735689600,
+    "description": "GPT-5.5 Pro \u2014 OpenAI advanced reasoning model with 1M context and text/image inputs for complex, high-stakes tasks.",
+    "context_length": 1000000,
+    "architecture": {
+     "modality": "text+image->text",
+     "input_modalities": [
+      "text",
+      "image"
+     ],
+     "output_modalities": [
+      "text"
+     ],
+     "tokenizer": "GPT",
+     "instruct_type": null
+    },
+    "pricing": {
+     "prompt": "0.0000300000",
+     "completion": "0.0001800000",
+     "input_cache_read": "0.0000045000",
+     "input_cache_write": "0.0000300000"
+    },
+    "top_provider": {
+     "context_length": 1000000,
+     "max_completion_tokens": 128000,
+     "is_moderated": false
+    },
+    "supported_parameters": [
+     "max_tokens",
+     "temperature",
+     "top_p",
+     "frequency_penalty",
+     "presence_penalty",
+     "logit_bias",
+     "logprobs",
+     "top_logprobs",
+     "stop",
+     "tools",
+     "tool_choice",
+     "response_format",
+     "seed",
+     "structured_outputs"
+    ],
+    "supported_features": [
+     "streaming",
+     "tools",
+     "vision",
+     "reasoning"
+    ],
+    "provider": "OpenAI",
+    "added_at": 1778943112,
+    "per_request_limits": null
+   }
+  ]
+ },
+ "prices": {
+  "models": [
+   {
+    "model": "openai-gpt-oss-120b",
+    "displayName": "OpenAI GPT OSS 120B",
+    "modelProvider": "OpenAI",
+    "providers": [
+     {
+      "provider": "morpheus",
+      "providerName": "Morpheus",
+      "providerModelId": "gpt-oss-120b",
+      "pricing": {
+       "input": 0.07,
+       "output": 0.28
+      }
+     },
+     {
+      "provider": "fireworks",
+      "providerName": "Fireworks AI",
+      "providerModelId": "accounts/fireworks/models/gpt-oss-120b",
+      "pricing": {
+       "input": 0.07,
+       "output": 0.3
+      }
+     },
+     {
+      "provider": "together",
+      "providerName": "Together AI",
+      "providerModelId": "openai/gpt-oss-120b",
+      "pricing": {
+       "input": 0.07,
+       "output": 0.3
+      }
+     },
+     {
+      "provider": "venice",
+      "providerName": "Venice AI",
+      "providerModelId": "openai-gpt-oss-120b",
+      "pricing": {
+       "input": 0.07,
+       "output": 0.3,
+       "cacheRead": 0.0105
+      }
+     },
+     {
+      "provider": "bedrock",
+      "providerName": "Amazon Bedrock",
+      "providerModelId": "openai.gpt-oss-120b",
+      "pricing": {
+       "input": 0.07,
+       "output": 0.3
+      }
+     }
+    ]
+   },
+   {
+    "model": "minimax-m2.1",
+    "displayName": "MiniMax M2.1",
+    "modelProvider": "MiniMax",
+    "providers": [
+     {
+      "provider": "openrouter",
+      "providerName": "OpenRouter",
+      "providerModelId": "minimax/minimax-m2.1",
+      "pricing": {
+       "input": 0.29,
+       "output": 0.95,
+       "cacheRead": 0.03
+      }
+     },
+     {
+      "provider": "venice",
+      "providerName": "Venice AI",
+      "providerModelId": "minimax-m21",
+      "pricing": {
+       "input": 0.35,
+       "output": 1.5,
+       "cacheRead": 0.04
+      }
+     },
+     {
+      "provider": "bedrock",
+      "providerName": "Amazon Bedrock",
+      "providerModelId": "minimax.minimax-m2.1",
+      "pricing": {
+       "input": 0.35,
+       "output": 1.5,
+       "cacheRead": 0.04
+      }
+     }
+    ]
+   },
+   {
+    "model": "gpt-5-image-mini",
+    "displayName": "GPT-5 Image Mini",
+    "modelProvider": "OpenAI",
+    "providers": [],
+    "mediaType": "image",
+    "mediaPricing": {
+     "perImageUsd": 0,
+     "per1kCharsUsd": 0,
+     "perMinuteUsd": 0,
+     "per1MTokensUsd": 0,
+     "inputPer1MUsd": 2.5,
+     "outputPer1MUsd": 2,
+     "outputPerMpUsd": 0
+    }
+   },
+   {
+    "model": "gpt-5.5-pro",
+    "displayName": "GPT-5.5 Pro",
+    "modelProvider": "OpenAI",
+    "providers": [
+     {
+      "provider": "venice",
+      "providerName": "Venice AI",
+      "providerModelId": "openai-gpt-55-pro",
+      "pricing": {
+       "input": 30,
+       "output": 180,
+       "cacheRead": 4.5
+      }
+     }
+    ]
+   }
+  ],
+  "providers": [
+   "anthropic",
+   "bankr",
+   "bedrock",
+   "deepseek",
+   "engy",
+   "fireworks",
+   "google",
+   "groq",
+   "jatevo",
+   "mistral",
+   "mordiem",
+   "morpheus",
+   "openai",
+   "openrouter",
+   "together",
+   "uncensored",
+   "venice",
+   "zai"
+  ],
+  "updated_at": "2026-11-08T23:34:21.458Z"
+ }
+}

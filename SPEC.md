@@ -164,15 +164,17 @@ JS build toolchain.
 
 1. ✅ Repo rules, git, workspace
 2. ✅ Live API probe + filter decisions
-3. **Base proxy**: config loader, catalog loader with TTL cache, filtered
+3. ✅ **Base proxy**: config loader, catalog loader with TTL cache, filtered
    `GET /v1/models`, `POST /v1/chat/completions` streaming passthrough
-4. **Filter engine**: all filter types + toggles, `failed_filters` errors,
-   `/min{N}` rewrite, unit tests
-5. **Admin panel**: config API, filter cards, key masking, catalog table,
-   refresh + staleness badge, agent snippets
+   (13/13 local checks green against the live catalog)
+4. ✅ **Filter engine**: all 7 filter types + toggles, `failed_filters` errors,
+   `/min{N}` rewrite, 48 unit tests green
+5. **Admin panel**: config API ✅ (endpoints live), UI pending — filter cards,
+   key masking, catalog table, refresh + staleness badge, agent snippets
 6. **Anthropic skin**: `/anthropic/*` passthrough + filtered model list
 7. **End-to-end verification**: OpenAI SDK and Claude Code through the proxy;
    rejection test for a capped-out model; streaming test; refresh test
+   (needs a real API key from the owner)
 
 ## Acceptance criteria (final)
 
