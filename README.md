@@ -17,6 +17,38 @@ uv sync --extra dev          # once: install fastapi, uvicorn, httpx
 uv run python -m surplus.main  # start on the port from config.ini
 ```
 
+CLI flags override config.ini for one run (nothing is written to disk):
+
+```bash
+uv run python -m surplus.main --port 8405
+uv run python -m surplus.main --host 127.0.0.1 --port 9000
+uv run python -m surplus.main --config D:/other/config.ini
+```
+
+The port is checked **before** the catalog is fetched, so a busy port fails in
+about a second with exit code 2 and a message telling you how to fix it.
+
+### "address already in use"
+
+Another instance is still running. Stop it with `Ctrl+C` in its terminal. If the
+port stays busy, find and kill the process holding it:
+
+```powershell
+# PowerShell
+Get-NetTCPConnection -LocalPort 8404 | Select-Object -ExpandProperty OwningProcess
+Stop-Process -Id <pid>
+```
+
+```bash
+# git-bash
+netstat -ano | grep :8404
+MSYS_NO_PATHCONV=1 taskkill //PID <pid> //F
+```
+
+Note: `uv run` spawns a child Python process. Killing only the `uv` wrapper can
+leave the server holding the port — kill the child PID shown by
+`Started server process [...]`, or just use `Ctrl+C`.
+
 First run uses built-in defaults; `config.example.ini` is written next to it.
 Copy it to `config.ini` (gitignored) to change the port, filters, or API key.
 

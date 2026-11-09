@@ -5,10 +5,13 @@ Run: ``uv run python -m surplus.main`` (host/port come from config.ini).
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import contextlib
 import json
 import logging
+import socket
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -486,20 +489,79 @@ async def proxy_v1(sub_path: str, request: Request):
         )
 
 
-def main() -> None:
-    cfg = load_config(CONFIG_PATH)
-    write_example_config(Path(__file__).resolve().parent.parent / "config.example.ini")
-    log.info(
-        "starting surplus-router on http://%s:%d (admin: /admin)", cfg.server.host, cfg.server.port
+def port_in_use(host: str, port: int) -> bool:
+    """Probe the bind address before doing any work, so a busy port fails fast."""
+    family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    probe_host = "::" if host in {"::", ""} else ("0.0.0.0" if host == "0.0.0.0" else host)
+    with socket.socket(family, socket.SOCK_STREAM) as sock:
+        sock.settimeout(1.0)
+        try:
+            sock.bind((probe_host, port))
+        except OSError:
+            return True
+    return False
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="surplus-router",
+        description="Local price-filtered proxy for the Surplus Intelligence marketplace.",
     )
+    parser.add_argument(
+        "--host",
+        default=None,
+        help="override the bind host from config.ini (this run only)",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=None,
+        help="override the proxy port from config.ini (this run only)",
+    )
+    parser.add_argument(
+        "--config",
+        default=None,
+        help=f"path to config.ini (default: {CONFIG_PATH})",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    global CONFIG_PATH
+    if args.config:
+        CONFIG_PATH = Path(args.config).resolve()
+
+    cfg = load_config(CONFIG_PATH)
+    # The module-level state was built at import time from the default path; if
+    # --config pointed elsewhere, hand the new config to the running app state.
+    state.cfg = cfg
+    state.catalog.base_url = cfg.upstream.base_url
+    host = args.host or cfg.server.host
+    port = args.port or cfg.server.port
+
+    if port_in_use(host, port):
+        print(
+            f"error: {host}:{port} is already in use.\n"
+            f"  another router instance is probably running, or another app holds the port.\n"
+            f"  start on a different port for this run:  python -m surplus.main --port {port + 1}\n"
+            f"  or change it permanently in {CONFIG_PATH} ([server] port), "
+            f"or in the admin panel under Connection.",
+            file=sys.stderr,
+        )
+        return 2
+
+    write_example_config(CONFIG_PATH.parent / "config.example.ini")
+    log.info("starting surplus-router on http://%s:%d (admin: /admin)", host, port)
     uvicorn.run(
         app,
-        host=cfg.server.host,
-        port=cfg.server.port,
+        host=host,
+        port=port,
         log_level="info",
         access_log=False,
     )
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
