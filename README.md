@@ -17,12 +17,19 @@ uv sync --extra dev          # once: install fastapi, uvicorn, httpx
 uv run python -m surplus.main  # start on the port from config.ini
 ```
 
+The admin panel opens in your default browser as soon as the server accepts
+connections (it waits for the socket, so you never get a connection-error tab).
+Turn it off per run with `--no-browser`, or permanently with
+`open_browser = false` under `[server]` in `config.ini` — there is also a switch
+in the panel under Connection.
+
 CLI flags override config.ini for one run (nothing is written to disk):
 
 ```bash
 uv run python -m surplus.main --port 8405
 uv run python -m surplus.main --host 127.0.0.1 --port 9000
 uv run python -m surplus.main --config D:/other/config.ini
+uv run python -m surplus.main --no-browser
 ```
 
 The port is checked **before** the catalog is fetched, so a busy port fails in

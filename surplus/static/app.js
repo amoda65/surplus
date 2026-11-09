@@ -194,6 +194,7 @@ function renderConfig(cfg) {
   $("#f-base").value = cfg.upstream.base_url;
   $("#f-ttl").value = cfg.upstream.catalog_ttl_seconds;
   $("#f-timeout").value = cfg.upstream.request_timeout_seconds;
+  $("#f-open-browser").checked = cfg.server.open_browser !== false;
   $("#f-allow-unknown").checked = !!cfg.filter.allow_unknown_models;
 
   for (const def of FILTERS) {
@@ -404,7 +405,11 @@ function wire() {
   $("#save-connection").addEventListener("click", () =>
     save(
       {
-        server: { host: $("#f-host").value.trim(), port: Number($("#f-port").value) },
+        server: {
+          host: $("#f-host").value.trim(),
+          port: Number($("#f-port").value),
+          open_browser: $("#f-open-browser").checked,
+        },
         upstream: {
           base_url: $("#f-base").value.trim(),
           catalog_ttl_seconds: Number($("#f-ttl").value),

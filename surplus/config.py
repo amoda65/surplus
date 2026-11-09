@@ -20,6 +20,7 @@ DEFAULTS: dict[str, dict[str, str]] = {
     "server": {
         "host": "127.0.0.1",
         "port": "8404",
+        "open_browser": "true",
     },
     "upstream": {
         "base_url": "https://api.surplusintelligence.ai",
@@ -54,6 +55,7 @@ DEFAULTS: dict[str, dict[str, str]] = {
 class ServerConfig:
     host: str = "127.0.0.1"
     port: int = 8404
+    open_browser: bool = True
 
 
 @dataclass
@@ -171,6 +173,7 @@ def load_config(path: Path | str | None = None) -> AppConfig:
     server = ServerConfig(
         host=server_raw.get("host", "127.0.0.1"),
         port=_to_int(server_raw.get("port", "8404"), 8404),
+        open_browser=_to_bool(server_raw.get("open_browser"), True),
     )
     upstream = UpstreamConfig(
         base_url=upstream_raw.get("base_url", DEFAULTS["upstream"]["base_url"]).rstrip("/"),
@@ -209,7 +212,11 @@ def load_config(path: Path | str | None = None) -> AppConfig:
 
 def _to_parser(cfg: AppConfig) -> configparser.ConfigParser:
     parser = configparser.ConfigParser()
-    parser["server"] = {"host": cfg.server.host, "port": str(cfg.server.port)}
+    parser["server"] = {
+        "host": cfg.server.host,
+        "port": str(cfg.server.port),
+        "open_browser": str(cfg.server.open_browser).lower(),
+    }
     parser["upstream"] = {
         "base_url": cfg.upstream.base_url,
         "catalog_ttl_seconds": str(cfg.upstream.catalog_ttl_seconds),
@@ -270,7 +277,11 @@ def public_view(cfg: AppConfig) -> dict:
     """Config as safe-to-expose JSON for the admin UI: key is masked, never full."""
     key, source = resolve_api_key(cfg)
     return {
-        "server": {"host": cfg.server.host, "port": cfg.server.port},
+        "server": {
+            "host": cfg.server.host,
+            "port": cfg.server.port,
+            "open_browser": cfg.server.open_browser,
+        },
         "upstream": {
             "base_url": cfg.upstream.base_url,
             "catalog_ttl_seconds": cfg.upstream.catalog_ttl_seconds,

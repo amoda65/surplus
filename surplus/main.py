@@ -12,7 +12,9 @@ import json
 import logging
 import socket
 import sys
+import threading
 import time
+import webbrowser
 from pathlib import Path
 from typing import Any
 
@@ -338,6 +340,8 @@ async def admin_set_config(request: Request, payload: dict[str, Any]) -> JSONRes
     server = payload.get("server") or {}
     if "host" in server and isinstance(server["host"], str) and server["host"].strip():
         cfg.server.host = server["host"].strip()
+    if "open_browser" in server:
+        cfg.server.open_browser = bool(server["open_browser"])
     if "port" in server:
         try:
             port = int(server["port"])
@@ -502,6 +506,54 @@ def port_in_use(host: str, port: int) -> bool:
     return False
 
 
+def admin_url(host: str, port: int) -> str:
+    """Browsable admin URL. Wildcard bind hosts are not dialable, so use loopback."""
+    dialable = "127.0.0.1" if host in {"0.0.0.0", "::", "", "*"} else host
+    if ":" in dialable:  # IPv6 literal
+        dialable = f"[{dialable}]"
+    return f"http://{dialable}:{port}/admin"
+
+
+def wait_for_port(host: str, port: int, timeout: float = 20.0) -> bool:
+    """Block until something accepts a TCP connection on host:port (or timeout)."""
+    dialable = "127.0.0.1" if host in {"0.0.0.0", "::", "", "*"} else host
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection((dialable, port), timeout=0.5):
+                return True
+        except OSError:
+            time.sleep(0.15)
+    return False
+
+
+def open_browser_when_ready(
+    url: str, host: str, port: int, timeout: float = 20.0, opener=webbrowser.open
+) -> threading.Thread:
+    """Open the admin panel once the server actually accepts connections.
+
+    Runs on a daemon thread so it never delays or blocks startup, and never
+    opens a tab that would just show a connection error.
+    """
+
+    def _run() -> None:
+        if wait_for_port(host, port, timeout=timeout):
+            try:
+                opener(url)
+                log.info("opened the admin panel in your browser: %s", url)
+            except Exception as exc:  # noqa: BLE001 - no browser, headless box, etc.
+                log.warning("could not open a browser (%s); admin panel is at %s", exc, url)
+        else:
+            log.warning(
+                "server did not accept connections within %.0fs; not opening a browser",
+                timeout,
+            )
+
+    thread = threading.Thread(target=_run, name="open-admin-browser", daemon=True)
+    thread.start()
+    return thread
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="surplus-router",
@@ -522,6 +574,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--config",
         default=None,
         help=f"path to config.ini (default: {CONFIG_PATH})",
+    )
+    parser.add_argument(
+        "--no-browser",
+        action="store_true",
+        help="do not open the admin panel in a browser at startup",
     )
     return parser.parse_args(argv)
 
@@ -552,7 +609,15 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     write_example_config(CONFIG_PATH.parent / "config.example.ini")
-    log.info("starting surplus-router on http://%s:%d (admin: /admin)", host, port)
+    url = admin_url(host, port)
+    log.info("starting surplus-router on http://%s:%d (admin: %s)", host, port, url)
+
+    if cfg.server.open_browser and not args.no_browser:
+        # Waits for the socket to accept connections, then opens the panel.
+        open_browser_when_ready(url, host, port)
+    else:
+        log.info("browser auto-open disabled; admin panel is at %s", url)
+
     uvicorn.run(
         app,
         host=host,

@@ -262,6 +262,15 @@ def main() -> int:
         status, res = request("POST", "/admin/api/config", {"server": {"port": "nope"}})
         record(status == 400, "invalid_port_rejected", f"http {status}")
 
+        # ---- browser auto-open toggle -------------------------------------
+        status, res = request("POST", "/admin/api/config", {"server": {"open_browser": False}})
+        record(
+            status == 200 and res.get("config", {}).get("server", {}).get("open_browser") is False,
+            "browser_autoopen_can_be_disabled",
+            f"open_browser={res.get('config', {}).get('server', {}).get('open_browser')}",
+        )
+        request("POST", "/admin/api/config", {"server": {"open_browser": True}})
+
         # ---- catalog table + search + sort --------------------------------
         query = urllib.parse.urlencode({"q": "gpt", "limit": 5})
         status, body = request("GET", f"/admin/api/models?{query}")

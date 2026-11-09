@@ -106,6 +106,7 @@ Admin API (JSON, localhost only): `GET/POST /admin/api/config`,
 [server]
 host = 127.0.0.1
 port = 8404
+open_browser = true          ; open /admin in the default browser at startup
 
 [upstream]
 base_url = https://api.surplusintelligence.ai
