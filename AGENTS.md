@@ -15,6 +15,8 @@ with OpenAI-compatible or Anthropic-compatible protocols. The proxy:
 
 - **No secrets in code or commits.** API key comes from environment/config file
   (`config.ini`), which is gitignored. A `config.example.ini` is committed.
+  Subscription URLs and share links are secrets of the same rank: config file
+  only, masked in every admin/status view, never logged.
 - **Code, comments, CLI output: English only.**
 - **Staged delivery:** one capability at a time; each stage verified against the
   real API before the next stage starts. Do not build ahead of the agreed plan.
@@ -44,6 +46,19 @@ with OpenAI-compatible or Anthropic-compatible protocols. The proxy:
 - Anthropic-compatible: `/anthropic` skin passthrough (`/anthropic/v1/messages`,
   model list) so Claude Code / Anthropic SDK work.
 - Streaming (SSE) must pass through unbuffered.
+
+## Proxy tunnel
+
+- The single httpx client is the only path upstream; the tunnel owns it
+  (`surplus/tunnel.py`). External mode points at a local proxy URL; managed
+  mode runs Xray-core as a child process fed by `surplus/subscription.py`.
+- Managed mode must never touch the system: loopback-only inbound, no TUN, no
+  system proxy, no env-var proxy leak (`trust_env=False` whenever a proxy is
+  set explicitly).
+- Failure is fail-open to direct routing with a loud reason (`proxy_tunnel_down`
+  on `/v1` errors, state + last error in the admin panel). The supervisor loop
+  probes, rotates routes on consecutive failures, and refreshes the
+  subscription on its TTL.
 
 ## Verification discipline
 

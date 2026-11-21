@@ -2,7 +2,7 @@
 
 **English** · [فارسی](README.fa.md)
 
-![CI](https://github.com/amoda65/surplus/actions/workflows/ci.yml/badge.svg)
+![CI](https://github.com/ZaniarManochehri/surplus/actions/workflows/ci.yml/badge.svg)
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue)
 ![Python](https://img.shields.io/badge/python-3.11%2B-green)
 
@@ -66,7 +66,7 @@ powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # 2) install the router straight from GitHub:
-uv tool install "git+https://github.com/amoda65/surplus.git"
+uv tool install "git+https://github.com/ZaniarManochehri/surplus.git"
 
 # 3) run it from anywhere:
 surplus
@@ -78,11 +78,11 @@ panel in your browser as soon as it's ready.
 Alternatives:
 
 ```bash
-pipx install "git+https://github.com/amoda65/surplus.git"
-pip  install "git+https://github.com/amoda65/surplus.git"
+pipx install "git+https://github.com/ZaniarManochehri/surplus.git"
+pip  install "git+https://github.com/ZaniarManochehri/surplus.git"
 
 # or from source
-git clone https://github.com/amoda65/surplus.git
+git clone https://github.com/ZaniarManochehri/surplus.git
 cd surplus
 uv sync && uv run python -m surplus.main
 ```
@@ -155,6 +155,50 @@ With an API key set, the panel also shows your live Surplus account
 (read-only): spendable credits (fiat + withdrawable USDC), 7d/30d spend
 overviews, and the per-request log (model, provider, status, latency, cost).
 
+## Proxy tunnel (censored networks)
+
+On networks where `api.surplusintelligence.ai` is unreachable, the router can
+push **only its own upstream traffic** through a proxy. Nothing else on the
+machine is routed, so a corporate VPN, git remotes and internal services keep
+working exactly as before — no TUN device, no system proxy, no VPN app.
+
+```
+agents ──► 127.0.0.1:8404 ──► [proxy tunnel] ──► api.surplusintelligence.ai
+                    everything else on the machine: untouched
+```
+
+Two modes, configured in the admin panel (**Proxy tunnel** card) or in
+`config.ini` under `[proxy]`:
+
+- **Managed Xray (recommended)** — paste your V2Ray subscription link once.
+  The router downloads Xray-core itself (latest release, from GitHub), builds
+  a loopback-only client config from the subscription, and runs Xray as a
+  child process. Every ~30s it probes Surplus *through* the tunnel; after two
+  consecutive failures it rotates to the next subscribed route automatically,
+  and re-fetches the subscription every 6 hours. A dead tunnel is never
+  silent: the admin panel shows a colored state badge and the exact last
+  error, and `/v1` requests return a `proxy_tunnel_down` JSON error instead of
+  a bare timeout.
+- **External proxy** — point at a VPN client running in proxy-only mode
+  (v2rayN/Nekobox/Hiddify with TUN and system proxy off), e.g.
+  `proxy_url = http://127.0.0.1:10809` or `socks5://127.0.0.1:10808`.
+
+Enable/disable is a button in the admin panel and applies live — no restart.
+When the tunnel is disabled or fully down, the router falls back to a direct
+connection and keeps reporting why the tunnel is not up.
+
+The subscription URL is stored only in `config.ini` (gitignored) and is shown
+masked in the panel, exactly like the API key. If your subscription panel is
+itself unreachable, paste raw share links (`vless://…`, one per line) into
+`subscription_links` instead.
+
+Verified end-to-end by `scripts/verify_proxy.py` (subscription link supplied
+via the `VERIFY_SUBSCRIPTION_URL` environment variable, never committed):
+
+```
+uv run python scripts/verify_proxy.py
+```
+
 ## Configuration
 
 `config.ini` is resolved in this order: `--config` → `SURPLUS_CONFIG` →
@@ -181,7 +225,7 @@ each model failed, and the detail drawer shows the live offers.
 ## Development
 
 ```bash
-git clone https://github.com/amoda65/surplus.git && cd surplus
+git clone https://github.com/ZaniarManochehri/surplus.git && cd surplus
 uv sync --extra dev
 uv run pytest -q                        # unit tests (offline, fixture-based)
 uv run ruff check surplus scripts tests

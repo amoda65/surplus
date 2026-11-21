@@ -11,6 +11,7 @@ import os
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlparse
 
 CONFIG_FILENAME = "config.ini"
 EXAMPLE_FILENAME = "config.example.ini"
@@ -63,6 +64,17 @@ DEFAULTS: dict[str, dict[str, str]] = {
         "api_key_env": "SURPLUS_API_KEY",
         "api_key": "",
     },
+    "proxy": {
+        "enabled": "false",
+        "mode": "external",
+        "proxy_url": "",
+        "subscription_url": "",
+        "subscription_links": "",
+        "xray_binary": "",
+        "health_check_interval_seconds": "30",
+        "failure_threshold": "2",
+        "subscription_refresh_hours": "6",
+    },
     "filter": {
         "enable_price_input": "true",
         "max_input_per_1m": "0.1",
@@ -114,6 +126,26 @@ class UpstreamConfig:
 
 
 @dataclass
+class ProxyConfig:
+    """Outbound proxy for upstream traffic only.
+
+    ``external`` uses a local proxy exposed by a VPN client (http:// or
+    socks5://); ``managed`` runs a bundled Xray-core with servers taken from a
+    subscription link. Disabled means direct connections, exactly as before.
+    """
+
+    enabled: bool = False
+    mode: str = "external"
+    proxy_url: str = ""
+    subscription_url: str = ""
+    subscription_links: str = ""
+    xray_binary: str = ""
+    health_check_interval_seconds: int = 30
+    failure_threshold: int = 2
+    subscription_refresh_hours: int = 6
+
+
+@dataclass
 class FilterConfig:
     enable_price_input: bool = True
     max_input_per_1m: float = 0.1
@@ -160,6 +192,7 @@ class AppConfig:
     server: ServerConfig = field(default_factory=ServerConfig)
     upstream: UpstreamConfig = field(default_factory=UpstreamConfig)
     filters: FilterConfig = field(default_factory=FilterConfig)
+    proxy: ProxyConfig = field(default_factory=ProxyConfig)
     api_key_env: str = "SURPLUS_API_KEY"
     file_api_key: str = ""
     config_path: Path | None = None
@@ -192,6 +225,52 @@ def _to_int(value: str, fallback: int) -> int:
         return int(float(str(value).strip()))
     except (TypeError, ValueError):
         return fallback
+
+
+PROXY_SCHEMES = {"http", "https", "socks5", "socks5h"}
+PROXY_MODES = {"external", "managed"}
+
+
+def normalize_proxy_url(raw: str | None) -> str:
+    """Return a usable proxy URL, or '' for direct connections.
+
+    Only http(s) and socks5(h) proxies are accepted; a malformed value is
+    treated as "no proxy" so a typo never wedges every upstream request.
+    """
+    text = (raw or "").strip()
+    if not text:
+        return ""
+    try:
+        parsed = urlparse(text)
+    except ValueError:
+        return ""
+    if parsed.scheme.lower() not in PROXY_SCHEMES or not parsed.hostname:
+        return ""
+    return text
+
+
+def normalize_proxy_mode(raw: str | None) -> str:
+    text = (raw or "").strip().lower()
+    return text if text in PROXY_MODES else "external"
+
+
+def mask_secret_url(url: str | None) -> str:
+    """Mask the sensitive middle of a URL, keeping scheme, host and a hint."""
+    text = (url or "").strip()
+    if not text:
+        return ""
+    try:
+        parsed = urlparse(text)
+        host = parsed.netloc
+        path = parsed.path or "/"
+    except ValueError:
+        return "***"
+    if not host:
+        return "***"
+    trimmed = path.strip("/")
+    if len(trimmed) <= 10:
+        return f"{parsed.scheme}://{host}/{trimmed}"
+    return f"{parsed.scheme}://{host}/{trimmed[:4]}…{trimmed[-6:]}"
 
 
 def resolve_api_key(cfg: AppConfig) -> tuple[str | None, str]:
@@ -234,6 +313,11 @@ def load_config(path: Path | str | None = None) -> AppConfig:
     )
     auth_raw = (
         {**DEFAULTS["auth"], **dict(parser["auth"])} if "auth" in parser else dict(DEFAULTS["auth"])
+    )
+    proxy_raw = (
+        {**DEFAULTS["proxy"], **dict(parser["proxy"])}
+        if "proxy" in parser
+        else dict(DEFAULTS["proxy"])
     )
     filter_raw = (
         {**DEFAULTS["filter"], **dict(parser["filter"])}
@@ -291,6 +375,21 @@ def load_config(path: Path | str | None = None) -> AppConfig:
         server=server,
         upstream=upstream,
         filters=filters,
+        proxy=ProxyConfig(
+            enabled=_to_bool(proxy_raw.get("enabled"), False),
+            mode=normalize_proxy_mode(proxy_raw.get("mode", "external")),
+            proxy_url=normalize_proxy_url(proxy_raw.get("proxy_url", "")),
+            subscription_url=(proxy_raw.get("subscription_url", "") or "").strip(),
+            subscription_links=(proxy_raw.get("subscription_links", "") or "").strip(),
+            xray_binary=(proxy_raw.get("xray_binary", "") or "").strip(),
+            health_check_interval_seconds=max(
+                10, _to_int(proxy_raw.get("health_check_interval_seconds", "30"), 30)
+            ),
+            failure_threshold=max(1, _to_int(proxy_raw.get("failure_threshold", "2"), 2)),
+            subscription_refresh_hours=max(
+                1, _to_int(proxy_raw.get("subscription_refresh_hours", "6"), 6)
+            ),
+        ),
         api_key_env=auth_raw.get("api_key_env", "SURPLUS_API_KEY"),
         file_api_key=auth_raw.get("api_key", ""),
         config_path=config_path,
@@ -310,6 +409,17 @@ def _to_parser(cfg: AppConfig) -> configparser.ConfigParser:
         "request_timeout_seconds": str(cfg.upstream.request_timeout_seconds),
     }
     parser["auth"] = {"api_key_env": cfg.api_key_env, "api_key": cfg.file_api_key}
+    parser["proxy"] = {
+        "enabled": str(cfg.proxy.enabled).lower(),
+        "mode": cfg.proxy.mode,
+        "proxy_url": cfg.proxy.proxy_url,
+        "subscription_url": cfg.proxy.subscription_url,
+        "subscription_links": cfg.proxy.subscription_links,
+        "xray_binary": cfg.proxy.xray_binary,
+        "health_check_interval_seconds": str(cfg.proxy.health_check_interval_seconds),
+        "failure_threshold": str(cfg.proxy.failure_threshold),
+        "subscription_refresh_hours": str(cfg.proxy.subscription_refresh_hours),
+    }
     f = cfg.filters
     parser["filter"] = {
         "enable_price_input": str(f.enable_price_input).lower(),
@@ -394,6 +504,21 @@ def public_view(cfg: AppConfig) -> dict:
             "api_key_env": cfg.api_key_env,
             "api_key_source": source,
             "api_key_masked": mask_key(key),
+        },
+        "proxy": {
+            "enabled": cfg.proxy.enabled,
+            "mode": cfg.proxy.mode,
+            "proxy_url": cfg.proxy.proxy_url,
+            "subscription_url_masked": mask_secret_url(cfg.proxy.subscription_url),
+            "subscription_url_set": bool(cfg.proxy.subscription_url),
+            "subscription_links_set": bool(cfg.proxy.subscription_links),
+            "subscription_links_count": len(
+                [line for line in cfg.proxy.subscription_links.splitlines() if line.strip()]
+            ),
+            "xray_binary": cfg.proxy.xray_binary,
+            "health_check_interval_seconds": cfg.proxy.health_check_interval_seconds,
+            "failure_threshold": cfg.proxy.failure_threshold,
+            "subscription_refresh_hours": cfg.proxy.subscription_refresh_hours,
         },
         "filter": {
             "enable_price_input": cfg.filters.enable_price_input,

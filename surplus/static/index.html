@@ -63,6 +63,64 @@
     </div>
   </section>
 
+  <section class="card" id="proxy-card">
+    <h2>Proxy tunnel</h2>
+    <p class="hint">Route only upstream traffic through a proxy. Agents keep talking to <code>127.0.0.1</code>; the rest of the machine (corporate VPN included) is untouched. When the tunnel is down the router falls back to direct and says why.</p>
+    <div class="kv" id="proxy-kv"></div>
+    <div class="row" style="margin-bottom:12px">
+      <button class="btn primary" id="proxy-enable" type="button">Enable tunnel</button>
+      <button class="btn" id="proxy-disable" type="button">Disable (direct)</button>
+      <button class="btn" id="proxy-rotate" type="button">Rotate route</button>
+      <button class="btn" id="proxy-refresh-sub" type="button">Refresh subscription</button>
+      <button class="btn" id="proxy-test" type="button">Test</button>
+    </div>
+    <div class="field">
+      <label for="f-proxy-mode">Mode</label>
+      <select id="f-proxy-mode">
+        <option value="managed">Managed Xray (subscription link)</option>
+        <option value="external">External proxy (your VPN client's local port)</option>
+      </select>
+      <span class="note">Managed: the router runs Xray-core itself from your subscription. External: point at a VPN client running in proxy-only mode (no TUN, no system proxy).</span>
+    </div>
+    <div class="field" id="proxy-external-field">
+      <label for="f-proxy-url">Local proxy URL</label>
+      <input id="f-proxy-url" type="text" spellcheck="false" placeholder="http://127.0.0.1:10809">
+      <span class="note">HTTP or SOCKS5. v2rayN exposes HTTP on 10809 and SOCKS on 10808 by default.</span>
+    </div>
+    <div class="field" id="proxy-sub-url-field">
+      <label for="f-sub-url">Subscription URL</label>
+      <input id="f-sub-url" type="password" autocomplete="off" spellcheck="false" placeholder="https://panel…/sub/…">
+      <span class="note" id="sub-saved-note">Stored in config.ini. Leave blank to keep the saved value.</span>
+    </div>
+    <details class="proxy-advanced">
+      <summary>Advanced</summary>
+      <div class="field">
+        <label for="f-xray-binary">Xray binary path (optional)</label>
+        <input id="f-xray-binary" type="text" spellcheck="false" placeholder="auto-download into %APPDATA%\surplus-router\xray">
+        <span class="note">Set only if auto-download is blocked; needs a recent Xray-core (v25+) for post-quantum configs.</span>
+      </div>
+      <div class="field">
+        <label for="f-sub-links">Raw links (fallback when the panel is unreachable)</label>
+        <textarea id="f-sub-links" rows="3" spellcheck="false" placeholder="vless://… one per line — blank keeps the saved ones"></textarea>
+      </div>
+      <div class="field">
+        <label for="f-proxy-interval">Health check interval (seconds)</label>
+        <input id="f-proxy-interval" type="number" min="10" step="5">
+      </div>
+      <div class="field">
+        <label for="f-proxy-threshold">Failures before rotating</label>
+        <input id="f-proxy-threshold" type="number" min="1" step="1">
+      </div>
+      <div class="field">
+        <label for="f-sub-refresh">Subscription refresh (hours)</label>
+        <input id="f-sub-refresh" type="number" min="1" step="1">
+      </div>
+    </details>
+    <div class="row">
+      <button class="btn primary" id="save-proxy" type="button">Save proxy settings</button>
+    </div>
+  </section>
+
   <section class="card">
     <h2>API key</h2>
     <p class="hint">The router replaces the caller's Authorization header with this key. Agents can send any placeholder.</p>

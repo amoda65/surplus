@@ -35,15 +35,28 @@ STRIP_RESPONSE_HEADERS = {
 }
 
 
-def build_client(timeout_seconds: float) -> httpx.AsyncClient:
-    """Long read timeout: streaming completions can run for minutes."""
+def build_client(
+    timeout_seconds: float, proxy_url: str | None = None
+) -> httpx.AsyncClient:
+    """Long read timeout: streaming completions can run for minutes.
+
+    ``proxy_url`` tunnels every upstream request through a local proxy (the
+    managed Xray inbound or an external VPN client's proxy port). When set we
+    ignore ambient HTTP(S)_PROXY variables so the tunnel is the only route.
+    """
     timeout = httpx.Timeout(
         connect=15.0,
         read=timeout_seconds,
         write=60.0,
         pool=30.0,
     )
-    return httpx.AsyncClient(timeout=timeout, follow_redirects=False, http2=False)
+    kwargs: dict = {}
+    if proxy_url:
+        kwargs["proxy"] = proxy_url
+        kwargs["trust_env"] = False
+    return httpx.AsyncClient(
+        timeout=timeout, follow_redirects=False, http2=False, **kwargs
+    )
 
 
 def upstream_headers(request: Request, api_key: str) -> dict[str, str]:
@@ -78,7 +91,10 @@ async def forward(
 
     async def body_iterator():
         try:
-            async for chunk in upstream.aiter_raw():
+            # aiter_bytes, not aiter_raw: httpx offers gzip upstream (good for
+            # the tunnel) and transparently inflates the stream here, so the
+            # downstream client always receives plain bytes.
+            async for chunk in upstream.aiter_bytes():
                 yield chunk
         finally:
             await upstream.aclose()

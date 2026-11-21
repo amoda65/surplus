@@ -18,6 +18,7 @@ import webbrowser
 from pathlib import Path
 from typing import Any
 
+import httpx
 import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
@@ -30,6 +31,8 @@ from .config import (
     AppConfig,
     load_config,
     mask_key,
+    normalize_proxy_mode,
+    normalize_proxy_url,
     public_view,
     resolve_api_key,
     resolve_config_path,
@@ -38,6 +41,7 @@ from .config import (
 )
 from .filters import UNKNOWN_MODEL, evaluate, evaluate_by_id, minimum_discount_path_prefix
 from .proxy import build_client, forward
+from .tunnel import Tunnel
 
 log = logging.getLogger("surplus")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -64,12 +68,82 @@ class State:
     def __init__(self) -> None:
         self.cfg: AppConfig = load_config(CONFIG_PATH)
         self.catalog = Catalog(self.cfg.upstream.base_url)
+        # Provisional direct client; swapped for a proxied one once the tunnel
+        # is up. Built at call time reads, so a swap never breaks live streams.
         self.client = build_client(self.cfg.upstream.request_timeout_seconds)
+        self.tunnel = Tunnel(lambda: self.cfg.proxy, self.cfg.upstream.base_url)
+        self.client_proxy_url: str | None = None
+        self._retired: list[httpx.AsyncClient] = []
         self.refresh_task: asyncio.Task | None = None
+        self.supervisor_task: asyncio.Task | None = None
         self.started_at = time.time()
+
+    def swap_client(self, new_client: httpx.AsyncClient) -> None:
+        """Replace the upstream client; retire the old one after a grace period.
+
+        Grace must exceed the request timeout: a streaming completion holds the
+        client it was started with, and closing it early would cut the stream.
+        """
+        old = self.client
+        self.client = new_client
+        if old is not None and old is not new_client:
+            self._retired.append(old)
+            task = asyncio.create_task(self._close_later(old))
+
+            def _drop(client: httpx.AsyncClient = old) -> None:
+                if client in self._retired:
+                    self._retired.remove(client)
+
+            task.add_done_callback(_drop)
+
+    async def _close_later(self, client: httpx.AsyncClient) -> None:
+        grace = max(60.0, self.cfg.upstream.request_timeout_seconds + 60.0)
+        try:
+            await asyncio.sleep(grace)
+        except asyncio.CancelledError:
+            return
+        with contextlib.suppress(Exception):
+            await client.aclose()
+
+    async def sync_client(self) -> None:
+        """Point the upstream client at the tunnel's current proxy URL."""
+        wanted = self.tunnel.proxy_url()
+        if wanted != self.client_proxy_url:
+            self.client_proxy_url = wanted
+            log.info("upstream client rebuilt (proxy: %s)", wanted or "direct")
+            self.swap_client(
+                build_client(self.cfg.upstream.request_timeout_seconds, wanted)
+            )
+            await self.catalog.refresh(self.client)
+
+    async def apply_proxy(self) -> dict:
+        """Apply the current [proxy] settings; returns the tunnel status."""
+        await self.tunnel.apply()
+        await self.sync_client()
+        return self.tunnel.status()
+
+    async def close_clients(self) -> None:
+        for client in list(self._retired) + [self.client]:
+            with contextlib.suppress(Exception):
+                await client.aclose()
+        self._retired.clear()
+
+
+def _proxy_fingerprint(cfg: AppConfig) -> tuple:
+    """Which proxy settings matter for the running tunnel and client."""
+    proxy = cfg.proxy
+    return (
+        proxy.enabled,
+        proxy.mode,
+        proxy.proxy_url,
+        proxy.subscription_url,
+        proxy.subscription_links,
+        proxy.xray_binary,
+    )
 
 
 state = State()
+_applied_proxy_fp: tuple | None = None
 
 
 def reload_config() -> AppConfig:
@@ -105,6 +179,7 @@ def maybe_reload_config() -> AppConfig:
         _config_mtime = mtime
         previous = state.cfg
         state.cfg = load_config(CONFIG_PATH)
+        state.tunnel.upstream_base = state.cfg.upstream.base_url
         log.info(
             "config.ini changed on disk; reloaded (caps %s/%s -> %s/%s)",
             previous.filters.max_input_per_1m,
@@ -230,6 +305,12 @@ async def lifespan(app: FastAPI):
     """Load the catalog at startup, then refresh it on a TTL loop forever."""
     log.info("config file: %s", CONFIG_PATH)
 
+    # Bring the proxy tunnel up first (managed mode may download Xray-core);
+    # a failure here is not fatal: the router runs direct and reports why.
+    global _applied_proxy_fp
+    await state.apply_proxy()
+    _applied_proxy_fp = _proxy_fingerprint(state.cfg)
+
     ok = await state.catalog.refresh(state.client)
     if ok:
         log.info(
@@ -241,14 +322,17 @@ async def lifespan(app: FastAPI):
         log.warning("startup catalog refresh failed; retrying in background")
 
     state.refresh_task = asyncio.create_task(_refresh_loop())
+    state.supervisor_task = asyncio.create_task(_supervisor_loop())
     try:
         yield
     finally:
-        if state.refresh_task:
-            state.refresh_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await state.refresh_task
-        await state.client.aclose()
+        for task in (state.refresh_task, state.supervisor_task):
+            if task:
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+        await state.tunnel.stop()
+        await state.close_clients()
 
 
 async def _refresh_loop() -> None:
@@ -256,6 +340,29 @@ async def _refresh_loop() -> None:
         ttl = max(5, state.cfg.upstream.catalog_ttl_seconds)
         await asyncio.sleep(ttl)
         await state.catalog.refresh(state.client)
+
+
+async def _supervisor_loop() -> None:
+    """Watch the tunnel: probe, rotate, refresh the subscription, and pick up
+    manual edits made to the [proxy] section of config.ini."""
+    global _applied_proxy_fp
+    while True:
+        interval = max(10, state.cfg.proxy.health_check_interval_seconds)
+        await asyncio.sleep(interval)
+        try:
+            maybe_reload_config()
+            fingerprint = _proxy_fingerprint(state.cfg)
+            if fingerprint != _applied_proxy_fp:
+                log.info("[proxy] settings changed; re-applying tunnel")
+                await state.apply_proxy()
+                _applied_proxy_fp = fingerprint
+                continue
+            await state.tunnel.health_tick()
+            await state.sync_client()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - the supervisor must never die
+            log.warning("tunnel supervision failed: %s", exc)
 
 
 app = FastAPI(
@@ -314,6 +421,7 @@ async def admin_status(request: Request) -> JSONResponse:
             "config": public_view(cfg),
             "api_key": {"source": source, "masked": mask_key(key)},
             "listening_on": {"host": host, "port": port},
+            "proxy": state.tunnel.status(),
             "restart_required": (host, port) != (cfg.server.host, cfg.server.port),
             "catalog": state.catalog.snapshot(cfg.upstream.catalog_ttl_seconds),
             "counts": {
@@ -438,6 +546,78 @@ async def admin_refresh() -> JSONResponse:
     )
 
 
+# ----------------------------------------------------------- proxy tunnel
+
+
+@app.get("/admin/api/proxy")
+async def admin_proxy_status() -> JSONResponse:
+    return JSONResponse(state.tunnel.status())
+
+
+@app.post("/admin/api/proxy/toggle")
+async def admin_proxy_toggle(payload: dict[str, Any]) -> JSONResponse:
+    """Enable or disable the tunnel; applies immediately, no restart."""
+    global _applied_proxy_fp
+    enabled = bool(payload.get("enabled"))
+    reload_config()
+    state.cfg.proxy.enabled = enabled
+    save_config(state.cfg, CONFIG_PATH)
+    reload_config()
+    status = await state.apply_proxy()
+    _applied_proxy_fp = _proxy_fingerprint(state.cfg)
+    log.info("proxy tunnel %s", "enabled" if enabled else "disabled")
+    return JSONResponse({"ok": True, "enabled": enabled, "proxy": status})
+
+
+@app.post("/admin/api/proxy/rotate")
+async def admin_proxy_rotate() -> JSONResponse:
+    """Skip to the next subscribed route (managed mode)."""
+    await state.tunnel.rotate("manual")
+    await state.sync_client()
+    return JSONResponse({"ok": True, "proxy": state.tunnel.status()})
+
+
+@app.post("/admin/api/proxy/refresh-subscription")
+async def admin_proxy_refresh_subscription() -> JSONResponse:
+    """Re-fetch the subscription and re-run the route ladder (managed mode)."""
+    await state.tunnel.refresh_subscription()
+    await state.sync_client()
+    return JSONResponse({"ok": True, "proxy": state.tunnel.status()})
+
+
+@app.post("/admin/api/proxy/test")
+async def admin_proxy_test(payload: dict[str, Any]) -> JSONResponse:
+    """Try one round trip through a proxy without touching live traffic.
+
+    With no ``proxy_url`` in the payload the router's effective proxy is used.
+    """
+    proxy = str(payload.get("proxy_url") or "").strip()
+    if not proxy:
+        proxy = state.tunnel.proxy_url() or ""
+    if not proxy:
+        return JSONResponse(
+            status_code=400,
+            content={"ok": False, "error": "no proxy URL to test (tunnel is direct)"},
+        )
+    timeout = httpx.Timeout(connect=10.0, read=20.0, write=10.0, pool=10.0)
+    started = time.perf_counter()
+    try:
+        async with httpx.AsyncClient(proxy=proxy, timeout=timeout, trust_env=False) as probe:
+            await probe.get(f"{state.cfg.upstream.base_url.rstrip('/')}/v1/models")
+        return JSONResponse(
+            {
+                "ok": True,
+                "proxy_url": proxy,
+                "latency_ms": int((time.perf_counter() - started) * 1000),
+            }
+        )
+    except Exception as exc:  # noqa: BLE001 - the point is to report failures
+        return JSONResponse(
+            status_code=502,
+            content={"ok": False, "proxy_url": proxy, "error": f"{type(exc).__name__}: {exc}"},
+        )
+
+
 @app.get("/admin/api/config")
 async def admin_get_config() -> JSONResponse:
     return JSONResponse(public_view(state.cfg))
@@ -446,6 +626,7 @@ async def admin_get_config() -> JSONResponse:
 @app.post("/admin/api/config")
 async def admin_set_config(request: Request, payload: dict[str, Any]) -> JSONResponse:
     """Save config from the UI. The API key is only written when supplied."""
+    global _applied_proxy_fp
     reload_config()
     cfg = state.cfg
     # What the process is actually listening on right now: a host/port change
@@ -544,8 +725,49 @@ async def admin_set_config(request: Request, payload: dict[str, Any]) -> JSONRes
     elif auth.get("clear_api_key") is True:
         cfg.file_api_key = ""
 
+    # Proxy tunnel: persisted here, applied by the tunnel endpoints (or the
+    # supervisor on the next tick). The subscription URL is only written when a
+    # non-empty value is supplied, like the API key.
+    proxy_payload = payload.get("proxy") or {}
+    proxy = cfg.proxy
+    previous_fingerprint = _proxy_fingerprint(cfg)
+    if "enabled" in proxy_payload:
+        proxy.enabled = bool(proxy_payload["enabled"])
+    if isinstance(proxy_payload.get("mode"), str) and proxy_payload["mode"].strip():
+        proxy.mode = normalize_proxy_mode(proxy_payload["mode"])
+    if isinstance(proxy_payload.get("proxy_url"), str):
+        proxy.proxy_url = normalize_proxy_url(proxy_payload["proxy_url"])
+    new_sub = proxy_payload.get("subscription_url")
+    if isinstance(new_sub, str) and new_sub.strip():
+        proxy.subscription_url = new_sub.strip()
+    elif proxy_payload.get("clear_subscription_url") is True:
+        proxy.subscription_url = ""
+    new_links = proxy_payload.get("subscription_links")
+    if isinstance(new_links, str) and new_links.strip():
+        proxy.subscription_links = new_links.strip()
+    elif proxy_payload.get("clear_subscription_links") is True:
+        proxy.subscription_links = ""
+    if isinstance(proxy_payload.get("xray_binary"), str):
+        proxy.xray_binary = proxy_payload["xray_binary"].strip()
+    for key, setter in (
+        ("health_check_interval_seconds", lambda v: max(10, int(v))),
+        ("failure_threshold", lambda v: max(1, int(v))),
+        ("subscription_refresh_hours", lambda v: max(1, int(v))),
+    ):
+        if key in proxy_payload:
+            with contextlib.suppress(TypeError, ValueError):
+                setattr(proxy, key, setter(proxy_payload[key]))
+
     save_config(cfg, CONFIG_PATH)
     reload_config()
+
+    # Applying a newly enabled tunnel can take a while (subscription fetch,
+    # Xray download); only do it when the proxy settings actually changed.
+    if _proxy_fingerprint(cfg) != previous_fingerprint:
+        status = await state.apply_proxy()
+        _applied_proxy_fp = _proxy_fingerprint(state.cfg)
+    else:
+        status = state.tunnel.status()
 
     passing = len(filtered_models())
     total = len(state.catalog.models)
@@ -558,6 +780,7 @@ async def admin_set_config(request: Request, payload: dict[str, Any]) -> JSONRes
                 cfg.server.host != running_host or cfg.server.port != running_port
             ),
             "listening_on": {"host": running_host, "port": running_port},
+            "proxy": status,
         }
     )
 
@@ -621,12 +844,20 @@ async def proxy_v1(sub_path: str, request: Request):
         return await forward(state.client, request, url, key)
     except Exception as exc:  # noqa: BLE001 - surface upstream failures as JSON
         log.warning("upstream request failed for %s: %s", sub_path, exc)
+        hint = state.tunnel.error_hint()
+        message = f"Upstream request failed: {type(exc).__name__}"
+        error_type = "upstream_error"
+        if hint:
+            # The tunnel is enabled but not healthy: say so instead of a bare
+            # 502, so the agent user knows exactly where to look.
+            message = f"{message}. {hint}"
+            error_type = "proxy_tunnel_down"
         return JSONResponse(
             status_code=502,
             content={
                 "error": {
-                    "message": f"Upstream request failed: {type(exc).__name__}",
-                    "type": "upstream_error",
+                    "message": message,
+                    "type": error_type,
                 }
             },
         )
@@ -750,6 +981,7 @@ def main(argv: list[str] | None = None) -> int:
     # config so --config and the installed-tool layout both work.
     state.cfg = cfg
     state.catalog.base_url = cfg.upstream.base_url
+    state.tunnel.upstream_base = cfg.upstream.base_url
     host = args.host or cfg.server.host
     port = args.port or cfg.server.port
 

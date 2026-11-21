@@ -299,6 +299,13 @@ function renderStatus(status) {
       ? `<span class="badge bad">API key missing</span>`
       : `<span class="badge ok">key: ${keySrc} ${status.api_key?.masked || ""}</span>`
   );
+  if (status.proxy?.enabled) {
+    const cls =
+      status.proxy.state === "up" ? "ok" : status.proxy.state === "down" ? "bad" : "warn";
+    badges.push(
+      `<span class="badge ${cls}">tunnel: ${status.proxy.state}</span>`
+    );
+  }
   const cat = status.catalog || {};
   badges.push(
     cat.stale
@@ -354,6 +361,7 @@ function renderStatus(status) {
     .join("");
 
   renderSnippets(status.config);
+  renderProxyStatus(status.proxy);
 }
 
 function renderConfig(cfg) {
@@ -365,6 +373,7 @@ function renderConfig(cfg) {
   $("#f-timeout").value = cfg.upstream.request_timeout_seconds;
   $("#f-open-browser").checked = cfg.server.open_browser !== false;
   $("#f-allow-unknown").checked = !!cfg.filter.allow_unknown_models;
+  renderProxyForm(cfg.proxy);
 
   for (const def of ALL_FILTERS) {
     $(`#tog-${def.id}`).checked = !!cfg.filter[def.toggle];
@@ -498,6 +507,125 @@ ANTHROPIC_API_KEY=***`,
       }
     });
   });
+}
+
+/* ------------------------------------------------------------------- proxy */
+
+const PROXY_STATE_LABELS = {
+  stopped: "stopped",
+  disabled: "off (direct)",
+  starting: "starting…",
+  rotating: "rotating…",
+  up: "connected",
+  down: "down",
+};
+
+function renderProxyStatus(proxy) {
+  if (!proxy) return;
+  const kv = $("#proxy-kv");
+  if (!kv) return;
+  const health = proxy.health || {};
+  const xray = proxy.xray || {};
+  const sub = proxy.subscription || {};
+  const server = proxy.server;
+  const stateLabel = PROXY_STATE_LABELS[proxy.state] || proxy.state;
+  const stateHtml =
+    `<span class="badge ${proxy.state === "up" ? "ok" : proxy.state === "down" ? "bad" : "warn"}">${stateLabel}</span>`;
+  const rows = [
+    ["State", stateHtml],
+    ["Mode", proxy.mode === "managed" ? "managed Xray" : "external proxy"],
+    ["Route", proxy.route || "—"],
+    [
+      "Server",
+      server ? `${escapeHtml(server.address)}:${server.port}` : "—",
+    ],
+    ["Probe latency", health.latency_ms != null ? `${health.latency_ms} ms` : "—"],
+    [
+      "Last success",
+      health.last_success_at ? new Date(health.last_success_at).toLocaleTimeString() : "—",
+    ],
+    ["Rotations", health.rotations ?? 0],
+    [
+      "Xray",
+      xray.running ? escapeHtml(xray.version || "running") : "not running",
+    ],
+    [
+      "Subscription",
+      `${sub.servers ?? 0} route(s)${sub.skipped?.length ? `, ${sub.skipped.length} skipped` : ""}`,
+    ],
+    ["Last error", proxy.last_error ? escapeHtml(proxy.last_error) : "none"],
+  ];
+  kv.innerHTML = rows
+    .map(([k, v]) => `<span>${k}</span><strong>${v}</strong>`)
+    .join("");
+
+  const enabled = proxy.enabled;
+  const managed = proxy.mode === "managed";
+  const btnEnable = $("#proxy-enable");
+  const btnDisable = $("#proxy-disable");
+  if (btnEnable)
+    btnEnable.disabled = enabled && ["up", "starting", "rotating"].includes(proxy.state);
+  if (btnDisable) btnDisable.disabled = !enabled;
+  if ($("#proxy-rotate")) $("#proxy-rotate").disabled = !managed || !enabled;
+  if ($("#proxy-refresh-sub"))
+    $("#proxy-refresh-sub").disabled = !managed || !enabled;
+}
+
+function renderProxyForm(cfgProxy) {
+  if (!cfgProxy) return;
+  $("#f-proxy-mode").value = cfgProxy.mode || "managed";
+  $("#f-proxy-url").value = cfgProxy.proxy_url || "";
+  $("#f-xray-binary").value = cfgProxy.xray_binary || "";
+  $("#f-proxy-interval").value = cfgProxy.health_check_interval_seconds ?? 30;
+  $("#f-proxy-threshold").value = cfgProxy.failure_threshold ?? 2;
+  $("#f-sub-refresh").value = cfgProxy.subscription_refresh_hours ?? 6;
+  const subInput = $("#f-sub-url");
+  if (cfgProxy.subscription_url_set) {
+    subInput.placeholder = `saved: ${cfgProxy.subscription_url_masked}`;
+  } else {
+    subInput.placeholder = "https://panel…/sub/…";
+  }
+  const links = $("#f-sub-links");
+  links.placeholder = cfgProxy.subscription_links_count
+    ? `${cfgProxy.subscription_links_count} link(s) saved — paste to replace`
+    : "vless://… one per line — stored locally in config.ini";
+  syncProxyModeFields();
+}
+
+function syncProxyModeFields() {
+  const managed = $("#f-proxy-mode").value === "managed";
+  $("#proxy-external-field").style.display = managed ? "none" : "";
+  $("#proxy-sub-url-field").style.display = managed ? "" : "none";
+}
+
+function collectProxy() {
+  const payload = {
+    mode: $("#f-proxy-mode").value,
+    proxy_url: $("#f-proxy-url").value.trim(),
+    xray_binary: $("#f-xray-binary").value.trim(),
+    health_check_interval_seconds: Number($("#f-proxy-interval").value) || 30,
+    failure_threshold: Math.max(1, Number($("#f-proxy-threshold").value) || 2),
+    subscription_refresh_hours: Number($("#f-sub-refresh").value) || 6,
+  };
+  const sub = $("#f-sub-url").value.trim();
+  if (sub) payload.subscription_url = sub;
+  const rawLinks = $("#f-sub-links").value.trim();
+  if (rawLinks) payload.subscription_links = rawLinks;
+  return payload;
+}
+
+async function busyButton(btn, label, action) {
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = label;
+  try {
+    await action();
+  } catch (err) {
+    toast(`${err.message}`, "bad");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = original;
+  }
 }
 
 /* ------------------------------------------------------------------ models */
@@ -924,6 +1052,87 @@ function wire() {
       toast(`Could not clear key: ${err.message}`, "bad");
     }
   });
+
+  // ------------------------------------------------------------ proxy tunnel
+
+  $("#f-proxy-mode").addEventListener("change", syncProxyModeFields);
+
+  $("#save-proxy").addEventListener("click", (e) =>
+    busyButton(e.currentTarget, "Saving…", async () => {
+      await postJson(`${API}/config`, { proxy: collectProxy() });
+      $("#f-sub-url").value = "";
+      $("#f-sub-links").value = "";
+      await loadAll();
+      toast("Proxy settings saved and applied");
+    })
+  );
+
+  $("#proxy-enable").addEventListener("click", (e) =>
+    busyButton(e.currentTarget, "Starting…", async () => {
+      // Persist the form first so Enable uses what is on screen, then switch on.
+      await postJson(`${API}/config`, { proxy: collectProxy() });
+      const res = await postJson(`${API}/proxy/toggle`, { enabled: true });
+      $("#f-sub-url").value = "";
+      $("#f-sub-links").value = "";
+      renderProxyStatus(res.proxy);
+      await Promise.all([loadAll(), loadModels()]);
+      toast(
+        res.proxy?.state === "up"
+          ? `Tunnel is up (${res.proxy.server?.address || "route " + res.proxy.route})`
+          : `Tunnel enabled, state: ${res.proxy?.state || "?"} — see the status table`,
+        res.proxy?.state === "up" ? "info" : "warn"
+      );
+    })
+  );
+
+  $("#proxy-disable").addEventListener("click", (e) =>
+    busyButton(e.currentTarget, "Stopping…", async () => {
+      const res = await postJson(`${API}/proxy/toggle`, { enabled: false });
+      renderProxyStatus(res.proxy);
+      await loadAll();
+      toast("Tunnel disabled — the router connects directly");
+    })
+  );
+
+  $("#proxy-rotate").addEventListener("click", (e) =>
+    busyButton(e.currentTarget, "Rotating…", async () => {
+      const res = await postJson(`${API}/proxy/rotate`);
+      renderProxyStatus(res.proxy);
+      await loadAll();
+      toast(
+        res.proxy?.state === "up"
+          ? `Now on route ${res.proxy.route}: ${res.proxy.server?.address || "?"}`
+          : `Rotation done, state: ${res.proxy?.state}`,
+        res.proxy?.state === "up" ? "info" : "warn"
+      );
+    })
+  );
+
+  $("#proxy-refresh-sub").addEventListener("click", (e) =>
+    busyButton(e.currentTarget, "Refreshing…", async () => {
+      const res = await postJson(`${API}/proxy/refresh-subscription`);
+      renderProxyStatus(res.proxy);
+      await loadAll();
+      toast(
+        res.proxy?.subscription?.servers
+          ? `Subscription reloaded: ${res.proxy.subscription.servers} route(s)`
+          : "Subscription refresh failed — see the status table",
+        res.proxy?.subscription?.servers ? "info" : "warn"
+      );
+    })
+  );
+
+  $("#proxy-test").addEventListener("click", (e) =>
+    busyButton(e.currentTarget, "Testing…", async () => {
+      const external = $("#f-proxy-mode").value === "external";
+      const payload = external ? { proxy_url: $("#f-proxy-url").value.trim() } : {};
+      const res = await postJson(`${API}/proxy/test`, payload);
+      toast(
+        res.ok ? `Proxy reachable (${res.latency_ms} ms)` : `Proxy test failed: ${res.error}`,
+        res.ok ? "info" : "bad"
+      );
+    })
+  );
 
   const doRefresh = async (btn) => {
     btn.disabled = true;

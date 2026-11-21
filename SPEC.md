@@ -235,10 +235,15 @@ port/host change requires a restart.
 
 ```
 surplus/
-  main.py        FastAPI app: admin API, proxy routes, static UI, refresh task
+  main.py        FastAPI app: admin API, proxy routes, static UI, refresh task,
+                 tunnel supervisor loop, client swaps
   catalog.py     fetch + TTL cache of /v1/models and /v1/prices; per-1M pricing
   filters.py     pure functions: filter defs + evaluate(model) -> pass/fail reasons
-  proxy.py       httpx streaming passthrough (OpenAI + Anthropic paths)
+  proxy.py       httpx streaming passthrough (OpenAI + Anthropic paths), proxy-aware
+                 client factory
+  tunnel.py      outbound tunnel: external proxy URL, or managed Xray-core child
+                 process with probe / rotate / subscription refresh
+  subscription.py  vless/vmess/trojan/ss link parsing -> Xray outbounds + client config
   config.py      config.ini load/save (stdlib configparser), env override, atomic write
   static/
     index.html   admin panel
@@ -248,10 +253,15 @@ surplus/
 tests/
   test_filters.py    filter unit tests against fixture from live probe
   test_config.py     config round-trip, atomic write, env override
+  test_subscription.py  share-link parsing (synthetic links, real shapes)
+  test_proxy_config.py  [proxy] section validation, persistence, masking
+  test_tunnel.py     tunnel state machine with faked xray/probe layers
 ```
 
-Deps (uv): `fastapi`, `uvicorn`, `httpx`. Dev: `pytest`, `ruff`. No database, no
-JS build toolchain.
+Deps (uv): `fastapi`, `uvicorn`, `httpx[socks]`. Dev: `pytest`, `ruff`. No database, no
+JS build toolchain. Xray-core itself is not a Python dependency: managed mode
+downloads the release binary into the per-user config dir (or uses
+`[proxy] xray_binary`) and runs it as a child process.
 
 ## Stages (each verified before the next starts)
 
@@ -275,6 +285,15 @@ JS build toolchain.
    trend); account panel (balance + usage + request log) via the owner's key;
    model detail drawer; sortable/filterable catalog table — 120 unit tests,
    18/18 local + 40/40 admin checks green against the live API
+5d. ✅ **Proxy tunnel**: `[proxy]` config section, proxy-aware httpx client
+    (http/socks5, ambient env proxies ignored when explicit), managed Xray-core
+    child process fed by subscription links (vless/vmess/trojan/ss;
+    ws/grpc/tls/reality; post-quantum encryption passthrough), loopback-only
+    inbound, probe every 30s + route rotation on 2 consecutive failures,
+    subscription refresh on a TTL, live enable/disable endpoints (no restart),
+    `proxy_tunnel_down` upstream errors, admin card with state badge /
+    rotate / test — 170 unit tests green, 8/8 `scripts/verify_proxy.py` checks
+    green against the live API through a real subscription
 6. **Anthropic skin**: `/anthropic/*` passthrough + filtered model list
 7. **End-to-end verification**: OpenAI SDK and Claude Code through the proxy;
    rejection test for a capped-out model; streaming test; refresh test
@@ -291,4 +310,9 @@ JS build toolchain.
 - Claude Code / Anthropic SDK works through `/anthropic`.
 - Prices refresh on TTL, at startup, and on demand; a failed refresh keeps the
   last-good catalog and flags staleness.
-- No API key appears in code, logs, responses, or git history.
+- With `[proxy] enabled`, all upstream traffic leaves through the tunnel only;
+  disabling it (button in `/admin`) restores direct routing without a restart.
+  A broken tunnel is reported (`proxy_tunnel_down` errors, panel state) and
+  routes rotate automatically in managed mode.
+- No API key, subscription URL, or share link appears in code, logs,
+  responses, or git history (masked in admin/status views).

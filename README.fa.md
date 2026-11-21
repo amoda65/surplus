@@ -4,24 +4,28 @@
 
 <div dir="rtl">
 
-![CI](https://github.com/amoda65/surplus/actions/workflows/ci.yml/badge.svg)
+![CI](https://github.com/ZaniarManochehri/surplus/actions/workflows/ci.yml/badge.svg)
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue)
 ![Python](https://img.shields.io/badge/python-3.11%2B-green)
 
-یک پراکسی محلی کوچک که بین ایجنت‌های هوش مصنوعی شما و مارکت‌پلیس
-[Surplus Intelligence](https://www.surplusintelligence.ai) می‌نشیند — یک
-صرافی غیرمتمرکز برای inference مدل‌های زبانی که در آن یک مدل می‌تواند
-۹۵ تا ۹۹.۹٪ ارزان‌تر از قیمت فهرست معامله شود.
+یک پراکسی محلی کوچک که بین ایجنت‌های هوش مصنوعی شما و
+مارکت‌پلیس [Surplus Intelligence](https://www.surplusintelligence.ai)
+می‌نشیند — یک صرافی غیرمتمرکز برای inference مدل‌های زبانی که در آن یک مدل
+می‌تواند ۹۵ تا ۹۹.۹٪ ارزان‌تر از قیمت فهرست معامله شود.
 
 ایجنت‌هایتان را به‌جای مارکت‌پلیس به روتر وصل کنید. روتر **فقط مدل‌هایی را
 که از فیلترهای شما عبور کنند** به ایجنت نشان می‌دهد، بقیه را قبل از اینکه
 یک سنت خرج شود به‌صورت محلی رد می‌کند، و قیمت‌ها را خودش تازه نگه می‌دارد.
 
+<div dir="ltr">
+
+```text
+your agent ──► http://127.0.0.1:8404/v1 ──► filter gate ──► api.surplusintelligence.ai
+                                                    │
+                                          reject 403 (never forwarded)
 ```
-ایجنت شما ──► http://127.0.0.1:8404/v1 ──► دروازه فیلتر ──► api.surplusintelligence.ai
-                                                │
-                                      رد با 403 (هرگز ارسال نمی‌شود)
-```
+
+</div>
 
 ## چرا؟
 
@@ -36,43 +40,43 @@
 
 ## امکانات
 
-- اندپوینت **سازگار با OpenAI** در `/v1` — با OpenAI SDK و Cursor و Aider و
-  Continue و OpenCode و هر ابزاری که `/v1/chat/completions` بلد است کار
-  می‌کند (streaming بدون بافر عبور می‌کند)
+- اندپوینت **سازگار با OpenAI** در `/v1` — با OpenAI SDK و Cursor
+  و Aider و Continue و OpenCode و هر ابزاری که `/v1/chat/completions` بلد است
+  کار می‌کند (streaming بدون بافر عبور می‌کند)
 - **فیلتر روی قیمت واقعی بازار** (آنچه واقعاً پرداخت می‌کنید) با سقف‌های
   شاملِ دلار بر ۱ میلیون توکن
 - **۱۶ قانون فیلتر**، هرکدام با کلید فعال/غیرفعال مستقل: سقف قیمت
   ورودی/خروجی، سقف قیمت cache-write، حالت فقط-پروایدرهای-trusted، حداقل
   تخفیف، دروازه‌های کیفیت (آپتایم / TTFT / TPS)، عمق بازار (تعداد فروشنده
-  و آفرهای بدون سقف)، قابلیت‌های الزامی (tools، streaming و…)، حداقل طول
-  context، لیست مجاز/مسدود مدل‌ها، و حذف بازارهایی که تخفیفشان رو به
+  و آفرهای بدون سقف)، قابلیت‌های الزامی (tools، streaming و…)، حداقل
+  طول context و لیست مجاز/مسدود مدل‌ها، و حذف بازارهایی که تخفیفشان رو به
   آب‌رفتن است
 - **پنل مدیریت** در `/admin` — کلید API، فیلترها، پورت، جدول زنده کاتالوگ با
   مرتب‌سازی و فیلتر، کشوی جزئیات هر مدل (آفر تک‌تک پروایدرها، نمونه‌های
   کیفیت، روند تخفیف)، و **بالانس حساب + لاگ مصرف** به‌صورت زنده از Surplus
 - **قیمت‌های همیشه تازه**: بازخوانی پس‌زمینه با TTL، دکمه تازه‌سازی دستی،
   نشانگر stale؛ شکست در بازخوانی هرگز کاتالوگ سالم قبلی را پاک نمی‌کند
-- **Fail-closed**: مدل ناشناخته، مدل بدون آفر فعال، و مدل‌های با قیمت‌گذاری
+- **حالت fail-closed**: مدل ناشناخته، مدل بدون آفر فعال، و مدل‌های با قیمت‌گذاری
   رسانه‌ای به‌صورت محلی با `403` رد می‌شوند و نام همه قوانین ردکننده در
   پاسخ می‌آید
-- بدون دیتابیس، بدون بیلد فرانت‌اند، فقط سه وابستگی (fastapi، uvicorn،
-  httpx)؛ کلید API هرگز از ماشین شما بیرون نمی‌رود
+- بدون دیتابیس، بدون بیلد فرانت‌اند، فقط سه وابستگی (fastapi، uvicorn، httpx)؛
+  کلید API هرگز از ماشین شما بیرون نمی‌رود
 
 ## نصب
 
-روتر یک پکیج پایتون است؛ ساده‌ترین راه نصب جهانی با
-[uv](https://docs.astral.sh/uv/) است.
+روتر یک پکیج پایتون است؛ ساده‌ترین راه نصب جهانی با [uv](https://docs.astral.sh/uv/)
+است.
 
 ```bash
-# ۱) نصب uv (یک بار) — ویندوز:
+# install uv (once) — Windows:
 powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
 # مک/لینوکس:
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# ۲) نصب روتر مستقیم از گیت‌هاب:
-uv tool install "git+https://github.com/amoda65/surplus.git"
+# ۱) نصب روتر مستقیم از گیت‌هاب:
+uv tool install "git+https://github.com/ZaniarManochehri/surplus.git"
 
-# ۳) اجرا از هر مسیری:
+# ۲) اجرا از هر مسیری:
 surplus
 ```
 
@@ -82,11 +86,11 @@ surplus
 راه‌های جایگزین:
 
 ```bash
-pipx install "git+https://github.com/amoda65/surplus.git"
-pip  install "git+https://github.com/amoda65/surplus.git"
+pipx install "git+https://github.com/ZaniarManochehri/surplus.git"
+pip  install "git+https://github.com/ZaniarManochehri/surplus.git"
 
 # یا از سورس
-git clone https://github.com/amoda65/surplus.git
+git clone https://github.com/ZaniarManochehri/surplus.git
 cd surplus
 uv sync && uv run python -m surplus.main
 ```
@@ -101,10 +105,10 @@ surplus --config path.ini  # استفاده از فایل کانفیگ مشخص
 
 ## شروع سریع
 
-1. دستور `surplus` را اجرا کنید. پنل مدیریت در
-   `http://127.0.0.1:8404/admin` باز می‌شود.
-2. کلید API خود را در بخش **API key** وارد کنید (از
-   [surplusintelligence.ai](https://www.surplusintelligence.ai/app) بگیرید).
+1. دستور `surplus` را اجرا کنید. پنل مدیریت در `http://127.0.0.1:8404/admin` باز
+   می‌شود.
+2. کلید API خود را در بخش **API key** وارد کنید (از [surplusintelligence.ai](https://www.surplusintelligence.ai/app)
+   بگیرید).
    کلید فقط در فایل کانفیگ gitignore‌شده روی ماشین خودتان ذخیره می‌شود،
    همه‌جا ماسکه است، و فقط سمت سرور استفاده می‌شود.
 3. فیلترها را تنظیم کنید (پیش‌فرض: حداکثر **$0.10 بر ۱M ورودی** و
@@ -150,35 +154,85 @@ OPENAI_API_KEY=***
 | لیست‌ها | لیست مجاز مدل‌ها، لیست مسدود مدل‌ها، لیست مجاز پروایدرها |
 
 همیشه فعال (fail-closed): بدون آفر فعال → `no_market_offer`؛ قیمت‌گذاری
-رسانه‌ای (عکس/ویدیو/صوت) → `not_token_priced`؛ مدل ناشناخته →
-`unknown_model`. درخواست ردشده `403` محلی می‌گیرد که در `failed_filters`
-نام همه قوانین ردکننده هست — هرگز به بالادست نمی‌رسد.
-
+رسانه‌ای (عکس/ویدیو/صوت) → `not_token_priced`؛ مدل ناشناخته → `unknown_model`.
+درخواست ردشده `403` محلی می‌گیرد که در `failed_filters` نام همه قوانین
+ردکننده هست — هرگز به بالادست نمی‌رسد.
 ## پنل حساب کاربری
 
 با واردکردن کلید API، پنل اطلاعات زنده حساب Surplus شما را هم نشان می‌دهد
 (فقط خواندنی): اعتبار قابل خرج (تفکیک fiat و USDC قابل برداشت)، خلاصه
 مصرف ۷ و ۳۰ روزه، و لاگ هر درخواست (مدل، پروایدر، وضعیت، latency، هزینه).
 
+## تونل پروکسی (شبکه‌های سانسورشده)
+
+در شبکه‌هایی که `api.surplusintelligence.ai` در دسترس نیست، روتر می‌تواند
+**فقط ترافیک بالادست خودش** را از یک پروکسی رد کند. هیچ‌چیز دیگری از ماشین
+مسیریابی نمی‌شود؛ یعنی VPN شرکت، ریموت‌های گیت و سرویس‌های داخلی دقیقاً مثل
+قبل کار می‌کنند — بدون TUN، بدون پروکسی سیستمی، بدون نیاز به روشن‌بودن VPN
+روی کل سیستم.
+
+<div dir="ltr">
+
+```text
+agents ──► 127.0.0.1:8404 ──► [proxy tunnel] ──► api.surplusintelligence.ai
+              everything else on the machine: untouched
+```
+
+</div>
+
+دو حالت وجود دارد که در پنل مدیریت (کارت **Proxy tunnel**) یا در `config.ini`
+زیر `[proxy]` تنظیم می‌شوند:
+
+- **حالت Xray مدیریت‌شده (پیشنهادی)** — لینک سابسکریپشن V2Ray خود را یک بار وارد
+  می‌کنید. روتر خودش Xray-core را دانلود می‌کند (آخرین ریلیز از گیت‌هاب)، از
+  سابسکریپشن یک کانفیگ کلاینت فقط‌لوکال‌هاست می‌سازد و Xray را به‌عنوان
+  پروسه فرزند اجرا می‌کند. هر ۳۰ ثانیه Surplus را «از داخل تونل» چک می‌کند؛
+  بعد از دو شکست پیاپی خودکار به مسیر بعدی سابسکریپشن می‌چرخد و هر ۶ ساعت
+  سابسکریپشن را دوباره می‌گیرد. تونلِ قطع هرگز بی‌صدا نیست: پنل نشان وضعیت
+  رنگی و آخرین خطا را نشان می‌دهد و درخواست‌های `/v1` به‌جای timeout مبهم،
+  خطای JSON با نوع `proxy_tunnel_down` برمی‌گردانند.
+- **پروکسی خارجی** — به یک کلاینت VPN در حالت فقط-پروکسی وصل شوید (مثل v2rayN
+  یا Nekobox یا Hiddify، وقتی TUN و پروکسی سیستمی خاموش است)؛ نمونه‌اش `proxy_url = http://127.0.0.1:10809`
+  یا `socks5://127.0.0.1:10808` است.
+
+فعال و غیرفعال‌کردن با دکمه در پنل انجام می‌شود و زنده اعمال می‌شود — بدون
+ری‌استارت. وقتی تونل خاموش یا کاملاً قطع است، روتر به اتصال مستقیم برمی‌گردد
+و دلیل قطعی تونل را همیشه گزارش می‌کند.
+
+لینک سابسکریپشن فقط در `config.ini` (که gitignore شده) ذخیره می‌شود و در پنل
+ماسک دیده می‌شود، دقیقاً مثل کلید API. اگر خود پنل سابسکریپشن در دسترس نبود،
+لینک‌های خام (`vless://…` هر خط یک لینک) را در `subscription_links` بچسبانید.
+
+صحت چرخه کامل با `scripts/verify_proxy.py` روی API زنده بررسی می‌شود (لینک
+سابسکریپشن از متغیر محیطی `VERIFY_SUBSCRIPTION_URL` داده می‌شود و هرگز
+کامیت نمی‌شود):
+
+```bash
+uv run python scripts/verify_proxy.py
+```
+
 ## کانفیگ
 
-مسیر `config.ini` به این ترتیب پیدا می‌شود: `--config` → `SURPLUS_CONFIG` →
-`./config.ini` → `%APPDATA%\surplus-router\config.ini` (ویندوز) /
-`~/.config/surplus-router/config.ini`. فایل در اولین اجرا با مقادیر پیش‌فرض
-ساخته می‌شود؛ همه کلیدها در
-[`config.example.ini`](config.example.ini) هستند. پنل آن را اتمیک
-می‌نویسد و ویرایش دستی روی دیسک بدون ری‌استارت اعمال می‌شود (فقط تغییر
-host/port نیاز به ری‌استارت دارد).
+مسیر `config.ini` به این ترتیب پیدا می‌شود:
+
+1. آرگومان `--config`
+2. متغیر محیطی `SURPLUS_CONFIG`
+3. فایل محلی `./config.ini` در پوشه‌ی جاری (در صورت وجود)
+4. مسیر کاربر: در ویندوز `%APPDATA%\surplus-router\config.ini` و در لینوکس/مک `~/.config/surplus-router/config.ini`
+
+فایل در اولین اجرا با مقادیر پیش‌فرض ساخته می‌شود؛ همه کلیدها در [`config.example.ini`](config.example.ini)
+هستند. پنل آن را اتمیک می‌نویسد و ویرایش دستی روی دیسک بدون ری‌استارت اعمال
+می‌شود؛ فقط تغییر host/port به ری‌استارت نیاز دارد.
 
 کلید API را می‌توان از محیط هم داد (`SURPLUS_API_KEY`) که بر فایل اولویت
 دارد و هرگز روی دیسک نوشته نمی‌شود.
 
 ## رفع اشکال
 
-**`address already in use`** — یک نمونه دیگر در حال اجراست. با `Ctrl+C`
-ببندیدش، یا پروسه را پیدا کنید: `netstat -ano | findstr :8404` (ویندوز) /
-`lsof -i :8404` و آن PID را بکشید. روتر **قبل از** هر کاری پورت را چک
-می‌کند و با پیام راهنمای واضح خارج می‌شود.
+**خطای `address already in use`** —  یک نمونه دیگر در حال اجراست. با `Ctrl+C`
+ببندیدش، یا پروسه را پیدا کنید: در ویندوز با `netstat -ano | findstr :8404` و در
+لینوکس با `lsof -i :8404`؛ بعد آن PID را بکشید. روتر **قبل از** هر کاری پورت را
+چک می‌کند و با پیام راهنمای واضح خارج می‌شود.
 
 **همه مدل‌ها مسدود شده‌اند** — سقف‌ها را چک کنید: قیمت‌های بازار بر ۱
 میلیون توکن هستند؛ `$0.10/1M` واقعاً ارزان است. جدول کاتالوگ دلیل دقیق رد
@@ -187,7 +241,7 @@ host/port نیاز به ری‌استارت دارد).
 ## توسعه
 
 ```bash
-git clone https://github.com/amoda65/surplus.git && cd surplus
+git clone https://github.com/ZaniarManochehri/surplus.git && cd surplus
 uv sync --extra dev
 uv run pytest -q                        # تست‌های unit (آفلاین، با fixture)
 uv run ruff check surplus scripts tests
@@ -195,11 +249,11 @@ uv run python scripts/verify_local.py   # بررسی سرتاسری روی API �
 uv run python scripts/verify_admin.py   # بررسی پنل مدیریت روی API زنده
 ```
 
-یادداشت‌های طراحی در [`SPEC.md`](SPEC.md) و قواعد پروژه در
-[`AGENTS.md`](AGENTS.md) است.
+یادداشت‌های طراحی در [`SPEC.md`](SPEC.md) و قواعد پروژه در [`AGENTS.md`](AGENTS.md)
+است.
 
-اندپوینت سازگار با Anthropic (مسیر `/anthropic` برای Claude Code و
-Anthropic SDK) در نقشه راه است.
+اندپوینت سازگار با Anthropic (برای Claude Code و Anthropic SDK، از مسیر `/anthropic`)
+در نقشه راه است.
 
 ## مجوز
 
